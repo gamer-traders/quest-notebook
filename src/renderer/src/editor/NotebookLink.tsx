@@ -5,10 +5,20 @@ import { linkClosing } from './inlineRules';
 import { linkChoiceLabel, linkChoicePath, notebookTitled, type LinkChoice } from './linkItems';
 import type { PageEditor } from './schema';
 
-/** A link to another notebook, in the sentence. It shows the notebook's title as it is now, so renames carry through. */
-function NotebookLinkChip({ notebookId }: { notebookId: string }) {
+/**
+ * A link to another notebook, in the sentence. It shows the notebook's title as it is now, so renames carry through.
+ * A link read from a page file that names no page yet shows the words it was written with.
+ */
+function NotebookLinkChip({ notebookId, target }: { notebookId: string; target: string }) {
   const title = useStore((s) => (notebookId ? (s.notebooks.find((n) => n.id === notebookId)?.title ?? null) : null));
 
+  if (title === null && target) {
+    return (
+      <span className="notebook-link is-missing" role="button" aria-disabled="true" title={`No page called “${target}”`}>
+        {target}
+      </span>
+    );
+  }
   if (title === null) {
     return (
       <span className="notebook-link is-deleted" role="button" aria-disabled="true">
@@ -24,8 +34,8 @@ function NotebookLinkChip({ notebookId }: { notebookId: string }) {
 }
 
 export const NotebookLink = createReactInlineContentSpec(
-  { type: 'notebookLink', propSchema: { notebookId: { default: '' } }, content: 'none' },
-  { render: ({ inlineContent }) => <NotebookLinkChip notebookId={inlineContent.props.notebookId} /> },
+  { type: 'notebookLink', propSchema: { notebookId: { default: '' }, target: { default: '' } }, content: 'none' },
+  { render: ({ inlineContent }) => <NotebookLinkChip notebookId={inlineContent.props.notebookId} target={inlineContent.props.target} /> },
 );
 
 /**
@@ -52,7 +62,7 @@ export function insertNotebookLink(editor: PageEditor, notebookId: string, choic
  */
 export function insertLinks(editor: PageEditor, notebookIds: string[]) {
   const atLineEnd = editor.transact((tr) => tr.selection.$to.parentOffset === tr.selection.$to.parent.content.size);
-  const links = notebookIds.flatMap((notebookId, i) => [...(i > 0 ? [' '] : []), { type: 'notebookLink' as const, props: { notebookId } }]);
+  const links = notebookIds.flatMap((notebookId, i) => [...(i > 0 ? [' '] : []), { type: 'notebookLink' as const, props: { notebookId, target: '' } }]);
   editor.insertInlineContent([...links, ...(atLineEnd ? [' '] : [])]);
 }
 

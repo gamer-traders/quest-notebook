@@ -111,7 +111,7 @@ test('picking a notebook puts a link to it where [[ and the query were', () => {
 
   expect(editor.document[0].content).toEqual([
     { type: 'text', text: 'Same setup as ', styles: {} },
-    { type: 'notebookLink', props: { notebookId: 'sr' } },
+    { type: 'notebookLink', props: { notebookId: 'sr', target: '' } },
     { type: 'text', text: ' ', styles: {} },
   ]);
 });
@@ -124,7 +124,7 @@ test('a link mid-sentence adds no space', () => {
 
   expect(editor.document[0].content).toEqual([
     { type: 'text', text: 'See ', styles: {} },
-    { type: 'notebookLink', props: { notebookId: 'sr' } },
+    { type: 'notebookLink', props: { notebookId: 'sr', target: '' } },
     { type: 'text', text: ', again', styles: {} },
   ]);
 });
@@ -140,7 +140,7 @@ test("the create choice makes a top-level page in this page's space, links it, a
   expect(created).toMatchObject({ spaceId: 'space-market', parentId: null });
   expect(useStore.getState().activeId).toBe('j');
   expect(useStore.getState().focusTitleId).toBeNull();
-  expect(editor.document[0].content).toContainEqual({ type: 'notebookLink', props: { notebookId: created.id } });
+  expect(editor.document[0].content).toContainEqual({ type: 'notebookLink', props: { notebookId: created.id, target: '' } });
 });
 
 const titles = () => useStore.getState().notebooks.map((n) => n.title);
@@ -155,7 +155,7 @@ test('typing ]] after a notebook title turns [[Title]] into a link and closes th
   expect(menu()?.show).toBe(false);
   expect(editor.document[0].content).toEqual([
     { type: 'text', text: 'Price ', styles: {} },
-    { type: 'notebookLink', props: { notebookId: 'sr' } },
+    { type: 'notebookLink', props: { notebookId: 'sr', target: '' } },
     { type: 'text', text: ' held today', styles: {} },
   ]);
   expect(titles()).toEqual(['Journal: 20 Oct 2026', 'Support and resistance']);

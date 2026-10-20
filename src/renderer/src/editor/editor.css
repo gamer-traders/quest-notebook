@@ -95,6 +95,18 @@
   background: none;
 }
 
+/* A link written in a page file to a page that isn't there: its words, muted, on a dashed line. */
+.page-editor .notebook-link.is-missing {
+  color: var(--pencil);
+  text-decoration-style: dashed;
+  text-decoration-color: currentColor;
+  cursor: help;
+}
+
+.page-editor .notebook-link.is-missing:hover {
+  background: none;
+}
+
 /* Chart, trade plan and prediction blocks: a light frame, in the interface type. */
 
 .item-block {

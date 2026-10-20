@@ -14,7 +14,8 @@ export interface LinkInline {
 
 export interface NotebookLinkInline {
   type: 'notebookLink';
-  props: { notebookId: string };
+  /** `target` is the text a link was written with, kept so a link to a page that isn't there yet still reads. */
+  props: { notebookId: string; target?: string };
 }
 
 export type Inline = StyledText | LinkInline | NotebookLinkInline;

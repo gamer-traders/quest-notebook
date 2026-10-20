@@ -50,13 +50,13 @@ describe('pasting a page link', () => {
     const { text, html } = linkClipboard('sr', 'Support and resistance');
     expect(paste({ 'text/plain': text, 'text/html': `<meta charset="utf-8">${html}` })).toBe(true);
     expect(usual).toBe(0);
-    expect(editor.document[0].content).toContainEqual({ type: 'notebookLink', props: { notebookId: 'sr' } });
+    expect(editor.document[0].content).toContainEqual({ type: 'notebookLink', props: { notebookId: 'sr', target: '' } });
     expect(editor.document[0].content).not.toContainEqual(expect.objectContaining({ text: expect.stringContaining('[[') }));
   });
 
   test('plain [[Title]] naming exactly one page pastes as a link chip', () => {
     expect(paste({ 'text/plain': '[[support and resistance]]' })).toBe(true);
-    expect(editor.document[0].content).toContainEqual({ type: 'notebookLink', props: { notebookId: 'sr' } });
+    expect(editor.document[0].content).toContainEqual({ type: 'notebookLink', props: { notebookId: 'sr', target: '' } });
   });
 
   test('plain [[Title]] that names no page, or two, pastes as text', () => {
