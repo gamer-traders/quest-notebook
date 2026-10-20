@@ -80,3 +80,13 @@ export interface FlushResult {
   /** Where each saved page now is. */
   paths: Record<string, string>;
 }
+
+/** What changed on disk, outside the app. `spaces` is always the whole list, in order. */
+export interface DiskDelta {
+  spaces: SpaceRecord[];
+  journalSpaceId: string | null;
+  /** Pages added or changed, with where they are now. */
+  pages: PageRecord[];
+  /** Ids of pages whose files are gone. */
+  removed: string[];
+}
