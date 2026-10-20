@@ -55,3 +55,28 @@ export interface WorkspaceConfig {
 }
 
 export const EMPTY_UI: UiState = { openPageId: null, expanded: [], collapsedPanels: [] };
+
+/** A page the window wants on disk: where it belongs, and its finished file text. */
+export interface PageSave {
+  id: string;
+  spaceId: string;
+  parentId: string | null;
+  title: string;
+  json: string;
+}
+
+/** Everything that changed since the last flush. `spaces` is always the whole list, in order. */
+export interface FlushBatch {
+  spaces: SpaceRecord[];
+  journalSpaceId: string | null;
+  saves: PageSave[];
+  deletes: string[];
+}
+
+export interface FlushResult {
+  ok: boolean;
+  /** The first thing that went wrong. Everything else in the batch was still applied. */
+  error?: string;
+  /** Where each saved page now is. */
+  paths: Record<string, string>;
+}

@@ -1,0 +1,187 @@
+import { mkdir, readdir, readFile, rename, rmdir, stat } from 'node:fs/promises';
+import { formatJson } from '@shared/formatJson';
+import type { FlushBatch, FlushResult, PageSave } from '@shared/ipc';
+import { safeName, uniqueName } from '@shared/names';
+import { insideRoot, writeFileAtomic } from './paths';
+import { CONFIG_PATH, isIgnoredName, readConfig, type ScanIndex } from './scan';
+
+export interface ApplyDeps {
+  /** Moves a file or folder to the system Trash. */
+  trash(abs: string): Promise<void>;
+  now(): Date;
+}
+
+const JSON_EXT = '.json';
+const folderOfPage = (path: string) => path.slice(0, -JSON_EXT.length);
+const parentDir = (path: string) => path.slice(0, path.lastIndexOf('/'));
+const baseOf = (path: string) => folderOfPage(path.slice(path.lastIndexOf('/') + 1));
+
+/**
+ * Applies a batch from the window to the workspace folder, and keeps `index` in step, so the next scan
+ * finds nothing it didn't expect. Spaces go first, then deletes, then saves, parents before their pages.
+ * A save that fails is reported and the rest still apply.
+ */
+export async function applyFlush(root: string, index: ScanIndex, batch: FlushBatch, deps: ApplyDeps): Promise<FlushResult> {
+  const errors: string[] = [];
+  const paths: Record<string, string> = {};
+  const abs = (rel: string) => insideRoot(root, rel);
+  const exists = (rel: string) => stat(abs(rel)).then(() => true, () => false);
+  const leftBehind = new Set<string>();
+
+  /** Renames, going through a temporary name when only the case changes, which a case-insensitive disk would skip. */
+  const move = async (from: string, to: string) => {
+    if (from === to) return;
+    if (from.toLowerCase() === to.toLowerCase()) {
+      const tmp = `${from}.${Date.now()}.tmp`;
+      await rename(abs(from), abs(tmp));
+      await rename(abs(tmp), abs(to));
+    } else {
+      await rename(abs(from), abs(to));
+    }
+  };
+
+  /** Points every index entry under `from/` at `to/` instead. */
+  const repoint = (from: string, to: string) => {
+    for (const entry of index.pages.values()) if (entry.path.startsWith(`${from}/`)) entry.path = to + entry.path.slice(from.length);
+  };
+
+  const dropUnder = (folder: string) => {
+    for (const [id, entry] of index.pages) if (entry.path.startsWith(`${folder}/`)) index.pages.delete(id);
+  };
+
+  const spaceFolder = new Map<string, string>();
+  for (const [folder, id] of index.spaceIds) spaceFolder.set(id, folder);
+
+  // ---- Spaces ----
+  if (batch.spaces.length === 0) {
+    // The app never leaves a workspace without a space, so an empty list is a mistake, not a request to trash them all.
+    errors.push('A workspace keeps at least one space');
+  } else {
+    const wanted = new Set(batch.spaces.map((s) => s.id));
+    for (const [id, folder] of [...spaceFolder]) {
+      if (wanted.has(id)) continue;
+      if (await exists(folder)) await deps.trash(abs(folder));
+      dropUnder(folder);
+      index.spaceIds.delete(folder);
+      spaceFolder.delete(id);
+    }
+    for (const space of batch.spaces) {
+      try {
+        const current = spaceFolder.get(space.id);
+        const taken = (await readdir(root, { withFileTypes: true })).filter((e) => e.isDirectory() && e.name !== current).map((e) => e.name);
+        const name = current !== undefined && safeName(space.name) === current ? current : uniqueName(safeName(space.name), taken);
+        if (current === undefined) {
+          await mkdir(abs(name), { recursive: true });
+        } else if (name !== current) {
+          await move(current, name);
+          repoint(current, name);
+          index.spaceIds.delete(current);
+        } else continue;
+        index.spaceIds.set(name, space.id);
+        spaceFolder.set(space.id, name);
+      } catch (error) {
+        errors.push(`Couldn't update the space “${space.name}”: ${message(error)}`);
+      }
+    }
+  }
+
+  // ---- Deletes: each page's file, and its folder of sub-pages, to the Trash ----
+  for (const id of batch.deletes) {
+    const entry = index.pages.get(id);
+    if (!entry) continue;
+    try {
+      const folder = folderOfPage(entry.path);
+      if (await exists(entry.path)) await deps.trash(abs(entry.path));
+      if (await exists(folder)) await deps.trash(abs(folder));
+      index.pages.delete(id);
+      dropUnder(folder);
+      leftBehind.add(parentDir(entry.path));
+    } catch (error) {
+      errors.push(`Couldn't delete ${entry.path}: ${message(error)}`);
+    }
+  }
+
+  // ---- Saves ----
+  const saving = new Map(batch.saves.map((s) => [s.id, s]));
+  const depth = (save: PageSave) => {
+    let d = 0;
+    for (let p = save.parentId; p && saving.has(p) && d < saving.size; p = saving.get(p)!.parentId) d++;
+    return d;
+  };
+  const ordered = [...batch.saves].sort((a, b) => depth(a) - depth(b));
+
+  for (const save of ordered) {
+    try {
+      const entry = index.pages.get(save.id);
+      if (entry?.error) throw new Error('Page file is unreadable');
+      const space = spaceFolder.get(save.spaceId);
+      if (space === undefined) throw new Error(`The space for “${save.title}” isn't in this workspace`);
+      let dir = space;
+      if (save.parentId) {
+        const parent = index.pages.get(save.parentId);
+        if (!parent) throw new Error(`The page “${save.title}” sits under a page that isn't on disk`);
+        dir = folderOfPage(parent.path);
+      }
+
+      const own = entry && parentDir(entry.path) === dir ? baseOf(entry.path) : null;
+      const siblings = (await exists(dir)) ? (await readdir(abs(dir))).filter((n) => n.endsWith(JSON_EXT) && !isIgnoredName(n)).map((n) => n.slice(0, -JSON_EXT.length)) : [];
+      const name = uniqueName(safeName(save.title), siblings.filter((n) => n !== own));
+      const target = `${dir}/${name}${JSON_EXT}`;
+
+      if (!entry) {
+        await mkdir(abs(dir), { recursive: true });
+      } else if (entry.path !== target) {
+        await mkdir(abs(dir), { recursive: true });
+        const fromFolder = folderOfPage(entry.path);
+        await move(entry.path, target);
+        if (await exists(fromFolder)) {
+          await move(fromFolder, folderOfPage(target));
+          repoint(fromFolder, folderOfPage(target));
+        }
+        leftBehind.add(parentDir(entry.path));
+        entry.path = target;
+      }
+
+      if (entry?.text !== save.json) {
+        await writeFileAtomic(abs(target), save.json);
+        const info = await stat(abs(target));
+        index.pages.set(save.id, { path: target, mtimeMs: info.mtimeMs, size: info.size, text: save.json });
+      }
+      paths[save.id] = target;
+    } catch (error) {
+      errors.push(message(error));
+    }
+  }
+
+  // ---- A page folder whose last page left is removed. Space folders stay, even empty. ----
+  const spaceFolders = new Set(spaceFolder.values());
+  for (const dir of [...leftBehind].sort((a, b) => b.length - a.length)) {
+    if (spaceFolders.has(dir)) continue;
+    try {
+      const entries = await readdir(abs(dir));
+      if (entries.length === 0) await rmdir(abs(dir));
+    } catch {
+      // Already gone, or not empty after all.
+    }
+  }
+
+  // ---- workspace.json: space order and the journal space ----
+  if (batch.spaces.length > 0) {
+    try {
+      const config = await readConfig(root);
+      const journal = batch.journalSpaceId ? spaceFolder.get(batch.journalSpaceId) : undefined;
+      const next = formatJson({ format: 1, name: config.name, spaces: batch.spaces.flatMap((s) => spaceFolder.get(s.id) ?? []), journalSpace: journal ?? null });
+      const current = await readFile(abs(CONFIG_PATH), 'utf8').catch(() => null);
+      if (current !== next) {
+        await mkdir(abs('.quest'), { recursive: true });
+        await writeFileAtomic(abs(CONFIG_PATH), next);
+      }
+    } catch (error) {
+      errors.push(`Couldn't save the workspace settings: ${message(error)}`);
+    }
+  }
+
+  return { ok: errors.length === 0, ...(errors.length ? { error: errors[0] } : {}), paths };
+}
+
+const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
