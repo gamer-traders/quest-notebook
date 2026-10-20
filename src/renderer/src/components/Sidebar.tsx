@@ -7,6 +7,8 @@ import { extractTags } from '../lib/format';
 import { useStore } from '../store';
 import { PageTree } from './sidebar/PageTree';
 import { IS_MAC, settingsShortcutLabel } from './SettingsDialog';
+import { WorkspaceMenu } from './WorkspaceMenu';
+import { tailPath } from '../workspace/shortPath';
 
 interface Hit {
   notebook: Notebook;
@@ -62,6 +64,7 @@ function search(notebooks: Notebook[], query: string, titleOf: TitleOf): Hit[] {
 export function Sidebar({ onNavigate, onOpenSettings }: { onNavigate: () => void; onOpenSettings: (trigger: HTMLElement) => void }) {
   const notebooks = useStore((s) => s.notebooks);
   const spaces = useStore((s) => s.spaces);
+  const root = useStore((s) => s.workspace?.root ?? '');
   const { openNotebook } = useStore.getState();
   const [query, setQuery] = useState('');
 
@@ -80,7 +83,7 @@ export function Sidebar({ onNavigate, onOpenSettings }: { onNavigate: () => void
 
   return (
     <nav className="sidebar" aria-label="Notebooks">
-      <div className="brand">Quest Notebook</div>
+      <WorkspaceMenu />
 
       <div className="search">
         <input type="search" value={query} placeholder="Search notes and #tags" aria-label="Search notebooks" onChange={(e) => setQuery(e.target.value)} />
@@ -130,6 +133,9 @@ export function Sidebar({ onNavigate, onOpenSettings }: { onNavigate: () => void
         >
           {/* U+FE0E keeps the gear a text glyph, never an emoji. */}
           <span aria-hidden="true">{'\u2699\uFE0E'}</span> Settings
+        </button>
+        <button className="quiet workspace-path" title={`${root}\nShow in Finder`} onClick={() => void window.quest.workspaces.reveal()}>
+          {tailPath(root)}
         </button>
       </div>
     </nav>

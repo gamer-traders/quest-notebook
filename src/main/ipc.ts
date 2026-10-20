@@ -9,6 +9,8 @@ export function registerIpc(workspaces: Workspaces, getWindow: () => BrowserWind
   ipcMain.handle('workspaces:current', () => workspaces.current());
   ipcMain.handle('workspaces:recent', () => workspaces.recent());
   ipcMain.handle('workspaces:pick', async (_e, title: string) => {
+    // For automated end-to-end runs, which can't click a system dialog: the picker answers with this folder.
+    if (process.env.QUEST_PICK_FOLDER) return process.env.QUEST_PICK_FOLDER;
     const win = getWindow();
     const options = { title: String(title ?? ''), message: String(title ?? ''), properties: ['openDirectory', 'createDirectory'] as ('openDirectory' | 'createDirectory')[] };
     const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
@@ -23,7 +25,7 @@ export function registerIpc(workspaces: Workspaces, getWindow: () => BrowserWind
   ipcMain.handle('workspace:flush', (_e, batch: FlushBatch) =>
     workspaces.session ? workspaces.session.flush(batch) : { ok: false, error: 'No workspace is open', paths: {} },
   );
-  ipcMain.handle('workspace:ui', (_e, ui: UiState) => workspaces.session?.saveUi(ui));
+  ipcMain.handle('workspace:ui', (_e, ui: UiState, root?: string) => workspaces.session?.saveUi(ui, root));
   ipcMain.handle('app:open-external', async (_e, url: unknown) => {
     if (isWebLink(url)) await shell.openExternal(url);
   });

@@ -146,3 +146,17 @@ export function seedNotebooks(): Notebook[] {
     },
   ];
 }
+
+/** The sample pages, in the given workspace's spaces: matched to the sample spaces by name. Others are left out. */
+export function seedFor(spaces: Space[]): Notebook[] {
+  const idFor = new Map(SAMPLE_SPACES.flatMap((sample) => {
+    const space = spaces.find((s) => s.name === sample.name);
+    return space ? [[sample.id, space.id] as const] : [];
+  }));
+  const pages = seedNotebooks().flatMap((nb) => {
+    const spaceId = idFor.get(nb.spaceId);
+    return spaceId ? [{ ...nb, spaceId }] : [];
+  });
+  const kept = new Set(pages.map((p) => p.id));
+  return pages.filter((p) => p.parentId === null || kept.has(p.parentId));
+}

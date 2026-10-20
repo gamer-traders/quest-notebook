@@ -101,6 +101,7 @@ export function planFlush(prev: SyncSlice, next: SyncSlice, baseline: Baseline, 
 }
 
 interface SyncedState extends SyncSlice {
+  workspace: { root: string } | null;
   activeId: string | null;
   expanded: Record<string, boolean>;
   panelCollapsed: Record<string, boolean>;
@@ -136,6 +137,8 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
  * separately and less often.
  */
 export function startSync<S extends SyncedState>(api: QuestApi['workspace'], store: UseBoundStore<StoreApi<S>>, unsaved: Set<string>): SyncHandle {
+  // Everything this sync sends is for the workspace open when it started.
+  const root = store.getState().workspace?.root;
   let prev = slice(store.getState());
   let baseline = baselineFor(prev, unsaved);
   let dirty = new Set(unsaved);
@@ -160,7 +163,7 @@ export function startSync<S extends SyncedState>(api: QuestApi['workspace'], sto
     if (text === lastUi) return;
     lastUi = text;
     try {
-      await api.saveUi(ui);
+      await api.saveUi(ui, root);
     } catch (error) {
       console.error('Saving what the window shows failed:', error);
     }
@@ -169,7 +172,7 @@ export function startSync<S extends SyncedState>(api: QuestApi['workspace'], sto
   async function send(batch: FlushBatch) {
     let failed: string[] = [];
     try {
-      const result = await api.flush(batch);
+      const result = await api.flush({ ...batch, root });
       useSaveStatus.setState({ error: result.ok ? null : (result.error ?? 'Saving failed') });
       if (!result.ok) failed = batch.saves.filter((s) => !(s.id in result.paths)).map((s) => s.id);
     } catch (error) {

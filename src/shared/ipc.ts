@@ -67,6 +67,8 @@ export interface PageSave {
 
 /** Everything that changed since the last flush. `spaces` is always the whole list, in order. */
 export interface FlushBatch {
+  /** The workspace the batch was made for. Main refuses it if another workspace is open by now. */
+  root?: string;
   spaces: SpaceRecord[];
   journalSpaceId: string | null;
   saves: PageSave[];
@@ -117,7 +119,8 @@ export interface QuestApi {
   };
   workspace: {
     flush(batch: FlushBatch): Promise<FlushResult>;
-    saveUi(ui: UiState): Promise<void>;
+    /** `root` is the workspace the state belongs to: it's dropped if another one is open by now. */
+    saveUi(ui: UiState, root?: string): Promise<void>;
     onDiskChange(cb: (delta: DiskDelta) => void): () => void;
     /** The open workspace's folder went away. */
     onLost(cb: (message: string) => void): () => void;

@@ -32,7 +32,7 @@ const api: QuestApi = {
   },
   workspace: {
     flush: (batch) => ipcRenderer.invoke('workspace:flush', batch),
-    saveUi: (ui) => ipcRenderer.invoke('workspace:ui', ui),
+    saveUi: (ui, root) => ipcRenderer.invoke('workspace:ui', ui, root),
     onDiskChange: (cb) => listen<DiskDelta>('workspace:disk-change', cb),
     onLost: (cb) => listen<string>('workspace:lost', cb),
   },

@@ -22,6 +22,7 @@ export class WorkspaceSession {
   private queue: Promise<unknown> = Promise.resolve();
   private closed = false;
   private stopWatching: () => void = () => {};
+  private presenceTimer: ReturnType<typeof setInterval> | null = null;
 
   private constructor(
     readonly root: string,
@@ -31,11 +32,19 @@ export class WorkspaceSession {
     private readonly trash: (abs: string) => Promise<void>,
   ) {}
 
-  static async open(root: string, isNew: boolean, events: SessionEvents, trash: (abs: string) => Promise<void>): Promise<WorkspaceSession> {
+  /** `checkMs` is how often to look that the folder is still there: deleting it sends no change event. */
+  static async open(root: string, isNew: boolean, events: SessionEvents, trash: (abs: string) => Promise<void>, checkMs = 2000): Promise<WorkspaceSession> {
     const scanned = await scanWorkspace(root);
     const session = new WorkspaceSession(root, knownFromScan(scanned), { ...scanned.snapshot, isNew }, events, trash);
     session.stopWatching = watchWorkspace(root, () => void session.rescan());
+    session.presenceTimer = setInterval(() => void session.checkPresent(), checkMs);
     return session;
+  }
+
+  private async checkPresent(): Promise<void> {
+    if (this.closed) return;
+    const present = await stat(this.root).then((s) => s.isDirectory(), () => false);
+    if (!present) void this.rescan();
   }
 
   private turn<T>(work: () => Promise<T>): Promise<T> {
@@ -61,15 +70,16 @@ export class WorkspaceSession {
   flush(batch: FlushBatch): Promise<FlushResult> {
     return this.turn(async () => {
       if (this.closed) return { ok: false, error: 'This workspace is closed', paths: {} };
+      if (batch.root !== undefined && batch.root !== this.root) return { ok: false, error: 'These changes belong to another workspace', paths: {} };
       const result = await applyFlush(this.root, this.known.index, batch, { trash: this.trash, now: () => new Date() });
       this.known = knownAfterFlush(this.known, batch);
       return result;
     });
   }
 
-  saveUi(ui: UiState): Promise<void> {
+  saveUi(ui: UiState, root?: string): Promise<void> {
     return this.turn(async () => {
-      if (this.closed) return;
+      if (this.closed || (root !== undefined && root !== this.root)) return;
       await mkdir(join(this.root, '.quest'), { recursive: true });
       await writeFileAtomic(insideRoot(this.root, STATE_PATH), formatJson(ui));
     });
@@ -99,5 +109,6 @@ export class WorkspaceSession {
   close(): void {
     this.closed = true;
     this.stopWatching();
+    if (this.presenceTimer) clearInterval(this.presenceTimer);
   }
 }

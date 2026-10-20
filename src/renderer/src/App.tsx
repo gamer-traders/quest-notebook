@@ -5,9 +5,13 @@ import { NotebookView } from './components/NotebookView';
 import { ReviewView } from './components/ReviewView';
 import { IS_MAC, SettingsDialog, isSettingsShortcut } from './components/SettingsDialog';
 import { SaveWarning } from './components/SaveWarning';
+import { Welcome } from './components/Welcome';
+import { useWorkspaceUi } from './workspace/session';
 
 export function App() {
   const view = useStore((s) => s.view);
+  const workspace = useStore((s) => s.workspace);
+  const screen = useWorkspaceUi((s) => s.screen);
   const [navOpen, setNavOpen] = useState(false);
   // Open Settings, and the button that opened it: none for the shortcut.
   const [settings, setSettings] = useState<{ trigger: Element | null } | null>(null);
@@ -31,13 +35,17 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey, true);
   }, []);
 
+  // Nothing shows for the moment it takes main to say which workspace is open, so the welcome screen doesn't flash.
+  if (screen === 'loading') return <div className="app-loading" />;
+  if (!workspace || screen !== 'app') return <Welcome />;
+
   return (
     <div className={`app${navOpen ? ' nav-open' : ''}`}>
       <div className="topbar">
         <button className="quiet" aria-expanded={navOpen} onClick={() => setNavOpen((o) => !o)}>
           {navOpen ? 'Close' : 'Notebooks'}
         </button>
-        <span className="brand">Quest Notebook</span>
+        <span className="brand">{workspace.name}</span>
       </div>
       <Sidebar onNavigate={() => setNavOpen(false)} onOpenSettings={(trigger) => setSettings({ trigger })} />
       <main className="main">
