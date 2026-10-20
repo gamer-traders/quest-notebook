@@ -64,3 +64,23 @@ test('a save planned before an outside change to that page is refused as stale, 
     session.close();
   }
 });
+
+test('saving into a workspace whose folder is gone re-creates nothing and reports it lost', async () => {
+  const parent = await mkdtemp(join(tmpdir(), 'quest-gone-'));
+  const root = join(parent, 'ws');
+  await mkdir(join(root, 'Markets'), { recursive: true });
+  let lost: string | null = null;
+  // A long presence check, so only the save can notice.
+  const session = await WorkspaceSession.open(root, false, { change: () => {}, lost: (m) => (lost = m) }, async () => {}, 60_000);
+  try {
+    const markets = session.snapshot.spaces[0];
+    await rm(root, { recursive: true });
+    const result = await session.flush({ spaces: [markets], createdSpaces: [], deletedSpaces: [], journalSpaceId: null, deletes: [], saves: [{ id: 'n', spaceId: markets.id, parentId: null, title: 'New', json: '{}\n' }] });
+    await session.saveUi({ openPageId: null, expanded: [], collapsedPanels: [] });
+    expect(result.ok).toBe(false);
+    expect(lost).toBe(`Couldn't find ${root}`);
+    await expect(access(root)).rejects.toThrow();
+  } finally {
+    session.close();
+  }
+});

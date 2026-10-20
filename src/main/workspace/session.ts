@@ -46,8 +46,18 @@ export class WorkspaceSession {
 
   private async checkPresent(): Promise<void> {
     if (this.closed) return;
-    const present = await stat(this.root).then((s) => s.isDirectory(), () => false);
-    if (!present) void this.rescan();
+    if (!(await this.present())) void this.rescan();
+  }
+
+  private present(): Promise<boolean> {
+    return stat(this.root).then((s) => s.isDirectory(), () => false);
+  }
+
+  /** The folder went away: nothing more is written, and the window is told. */
+  private gone(): void {
+    if (this.closed) return;
+    this.close();
+    this.events.lost(`Couldn't find ${this.root}`);
   }
 
   private turn<T>(work: () => Promise<T>): Promise<T> {
@@ -73,6 +83,11 @@ export class WorkspaceSession {
   flush(batch: FlushBatch): Promise<FlushResult> {
     return this.turn(async () => {
       if (this.closed) return { ok: false, error: 'This workspace is closed', paths: {} };
+      // Writing into a folder that's gone would make it again, at the old place.
+      if (!(await this.present())) {
+        this.gone();
+        return { ok: false, error: `Couldn't find ${this.root}`, paths: {} };
+      }
       if (batch.root !== undefined && batch.root !== this.root) return { ok: false, error: 'These changes belong to another workspace', paths: {} };
       // A page changed on disk after the window planned this batch is left for the window to plan again.
       const seen = batch.seenSeq ?? this.seq;
@@ -88,6 +103,7 @@ export class WorkspaceSession {
   saveUi(ui: UiState, root?: string): Promise<void> {
     return this.turn(async () => {
       if (this.closed || (root !== undefined && root !== this.root)) return;
+      if (!(await this.present())) return this.gone();
       await mkdir(join(this.root, '.quest'), { recursive: true });
       await writeFileAtomic(insideRoot(this.root, STATE_PATH), formatJson(ui));
     });
@@ -96,12 +112,7 @@ export class WorkspaceSession {
   private rescan(): Promise<void> {
     return this.turn(async () => {
       if (this.closed) return;
-      const present = await stat(this.root).then((s) => s.isDirectory(), () => false);
-      if (!present) {
-        this.close();
-        this.events.lost(`Couldn't find ${this.root}`);
-        return;
-      }
+      if (!(await this.present())) return this.gone();
       try {
         const next = await scanWorkspace(this.root, this.known.index);
         const delta = diffScans(this.known, next);
