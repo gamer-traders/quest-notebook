@@ -1,0 +1,302 @@
+/*
+  The page editor: BlockNote, dressed in the notebook's paper and ink.
+  Its colours come from the app's tokens, which already follow the theme,
+  so one set of variables serves light and dark.
+*/
+
+.bn-root.bn-mantine,
+.bn-root.bn-mantine[data-color-scheme] {
+  --bn-font-family: var(--ui);
+  --bn-border-radius-small: 4px;
+  --bn-border-radius-medium: var(--radius);
+  --bn-border-radius-large: var(--radius);
+  --bn-colors-editor-text: var(--ink);
+  --bn-colors-editor-background: transparent;
+  --bn-colors-menu-text: var(--ink);
+  --bn-colors-menu-background: var(--sheet);
+  --bn-colors-tooltip-text: var(--sheet);
+  --bn-colors-tooltip-background: var(--ink);
+  --bn-colors-hovered-text: var(--ink);
+  --bn-colors-hovered-background: var(--chart-grid);
+  --bn-colors-selected-text: var(--sheet);
+  --bn-colors-selected-background: var(--ink);
+  --bn-colors-disabled-text: var(--pencil);
+  --bn-colors-disabled-background: var(--chart-grid);
+  --bn-colors-shadow: var(--rule-strong);
+  --bn-colors-border: var(--rule);
+  --bn-colors-side-menu: var(--pencil);
+}
+
+.page-editor .bn-editor {
+  padding-inline: var(--page-indent) 0;
+  font-family: var(--prose);
+  font-size: var(--prose-size);
+  line-height: 1.6;
+}
+
+/* The gap between blocks follows the density. A heading keeps its own room above. */
+.page-editor .bn-block-content {
+  padding-block: var(--block-pad);
+}
+
+/* Headings keep today's steps above the text size. */
+.page-editor [data-content-type='heading'] {
+  --level: calc(var(--prose-size) + 8.5px);
+  padding-top: 14px;
+}
+
+.page-editor [data-content-type='heading'][data-level='2'] {
+  --level: calc(var(--prose-size) + 4.5px);
+}
+
+.page-editor [data-content-type='heading'][data-level='3'] {
+  --level: calc(var(--prose-size) + 0.5px);
+}
+
+.page-editor .bn-block-outer > .bn-block > .bn-block-content[data-content-type='heading'] {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.page-editor .bn-inline-content code {
+  font-size: 0.85em;
+  background: var(--chart-grid);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+.page-editor .bn-inline-content a {
+  color: var(--focus);
+}
+
+/* A link to another notebook reads as part of the sentence: the prose type, in the link colour. */
+.page-editor .notebook-link {
+  color: var(--focus);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--focus) 45%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.page-editor .notebook-link:hover {
+  background: var(--chart-grid);
+  text-decoration-color: currentColor;
+}
+
+.page-editor .notebook-link.is-deleted {
+  color: var(--pencil);
+  text-decoration: line-through;
+  cursor: default;
+}
+
+.page-editor .notebook-link.is-deleted:hover {
+  background: none;
+}
+
+/* Chart, trade plan and prediction blocks: a light frame, in the interface type. */
+
+.item-block {
+  flex: 1;
+  min-width: 0;
+  margin: 6px 0;
+  padding: var(--item-pad);
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  font-family: var(--ui);
+  font-size: var(--ui-size);
+  line-height: 1.45;
+  white-space: normal;
+  cursor: auto;
+}
+
+/* Dragging across a chart pans it, so it shouldn't select the page's text on the way. */
+.item-block .chart-frame {
+  user-select: none;
+}
+
+/*
+  The chart library lays itself out in a table of its own. The editor's fixed table layout,
+  meant for tables in the text, would share the width out evenly: an empty column left of the
+  chart, and a price axis pushed past the frame's edge. Its own auto layout sizes each column to fit.
+*/
+.item-block .chart-host table {
+  table-layout: auto;
+}
+
+/* Selected as a whole, one Backspace or Delete away from going: it wears the highlighter. */
+.page-editor .ProseMirror-selectednode > .bn-block-content > .item-block {
+  border-color: var(--mark-solid);
+  box-shadow: 0 0 0 3px var(--mark);
+}
+
+.page-editor .ProseMirror-selectednode > .bn-block-content > .item-block::after {
+  display: none;
+}
+
+.item-missing {
+  margin: 0;
+  color: var(--pencil);
+  font-size: 14px;
+}
+
+/* Text blocks in the app's ink, where BlockNote has its own greys. */
+
+.page-editor [data-content-type='quote'] blockquote {
+  border-left: 2px solid var(--rule-strong);
+  color: var(--ink-soft);
+}
+
+.page-editor [data-content-type='divider'] hr {
+  border-top-color: var(--rule-strong);
+}
+
+.page-editor [data-content-type='checkListItem'] input {
+  accent-color: var(--ink);
+}
+
+.page-editor .bn-block-content[data-content-type='codeBlock'] {
+  background-color: var(--chart-grid);
+  color: var(--ink);
+  border-radius: var(--radius);
+}
+
+.page-editor .bn-block-content[data-content-type='codeBlock'] > pre {
+  --bn-suggestion-surface: var(--chart-grid);
+  padding: 14px 18px;
+  font-size: 0.82em;
+  line-height: 1.55;
+}
+
+/* A #tag in code keeps the code's type, so its columns stay lined up. */
+.page-editor [data-content-type='codeBlock'] .tag {
+  padding: 0;
+  font: inherit;
+}
+
+/* A text block selected as a whole wears the highlighter too. */
+.page-editor .ProseMirror-selectednode > .bn-block-content > *::after,
+.page-editor .bn-block-content.ProseMirror-selectednode > *::after {
+  background-color: var(--mark);
+  box-shadow: none;
+}
+
+/* Callouts: prose on the highlighter's tint, with its ink ruled down the left. */
+.page-editor .callout {
+  flex: 1;
+  margin: 4px 0;
+  padding: 8px 14px;
+  background: var(--mark);
+  border-left: 3px solid var(--mark-ink);
+  border-radius: 0 4px 4px 0;
+  font-family: var(--prose);
+}
+
+/* Highlights: the six chart-mark colours, the same on the page as on a chart. */
+.bn-root [data-style-type='backgroundColor'][data-value='yellow'],
+.bn-root [data-background-color='yellow'] {
+  background-color: var(--mark-yellow);
+}
+
+.bn-root [data-style-type='backgroundColor'][data-value='blue'],
+.bn-root [data-background-color='blue'] {
+  background-color: var(--mark-blue);
+}
+
+.bn-root [data-style-type='backgroundColor'][data-value='green'],
+.bn-root [data-background-color='green'] {
+  background-color: var(--mark-green);
+}
+
+.bn-root [data-style-type='backgroundColor'][data-value='red'],
+.bn-root [data-background-color='red'] {
+  background-color: var(--mark-red);
+}
+
+.bn-root [data-style-type='backgroundColor'][data-value='purple'],
+.bn-root [data-background-color='purple'] {
+  background-color: var(--mark-purple);
+}
+
+.bn-root [data-style-type='backgroundColor'][data-value='gray'],
+.bn-root [data-background-color='gray'] {
+  background-color: var(--mark-gray);
+}
+
+.page-editor [data-style-type='backgroundColor'] {
+  border-radius: 2px;
+}
+
+.highlight-icon {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.highlight-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px var(--rule-strong);
+}
+
+/*
+  Menus and the toolbar: interface type on a sheet, ruled like the app's panels.
+  They're portalled to the editor's root, so they're styled by their own classes.
+*/
+
+.bn-mantine .bn-toolbar,
+.bn-mantine .bn-suggestion-menu,
+.bn-mantine .bn-menu-dropdown,
+.bn-mantine .bn-form-popover,
+.bn-mantine .bn-tooltip {
+  font-family: var(--ui);
+}
+
+.bn-mantine .bn-toolbar,
+.bn-mantine .bn-suggestion-menu,
+.bn-mantine .bn-menu-dropdown,
+.bn-mantine .bn-form-popover {
+  background-color: var(--sheet);
+  border: 1px solid var(--rule);
+}
+
+.bn-mantine .bn-suggestion-menu-label {
+  color: var(--pencil);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.bn-mantine .bn-mt-suggestion-menu-item-section[data-position='left'] {
+  background-color: var(--paper);
+  color: var(--ink-soft);
+  box-shadow: inset 0 0 0 1px var(--rule);
+  padding: 6px;
+}
+
+.bn-mantine .bn-mt-suggestion-menu-item-subtitle {
+  color: var(--pencil);
+  font-size: 11.5px;
+}
+
+/* The [[ menu's small items still show where each page sits, so two pages with one title can be told apart. */
+.bn-mantine .link-menu .bn-suggestion-menu-item-small .bn-mt-suggestion-menu-item-subtitle:not(:empty) {
+  display: block;
+}
+
+.bn-mantine .bn-mt-suggestion-menu-item-section[data-position='right'] .mantine-Badge-root {
+  background-color: transparent;
+  color: var(--pencil);
+  box-shadow: inset 0 0 0 1px var(--rule);
+  font-family: var(--ui);
+  font-weight: 500;
+}

@@ -1,0 +1,30 @@
+import { BlockNoteSchema, createHeadingBlockSpec, defaultBlockSpecs, defaultInlineContentSpecs } from '@blocknote/core';
+import { ChartBlock, PredictionBlock, TradePlanBlock } from './ItemBlocks';
+import { CalloutBlock } from './Callout';
+import { NotebookLink } from './NotebookLink';
+
+// Tables, media, files, page breaks and toggle lists are left out: a notebook page doesn't hold them.
+const { paragraph, bulletListItem, numberedListItem, checkListItem, quote, codeBlock, divider } = defaultBlockSpecs;
+
+export const schema = BlockNoteSchema.create({
+  blockSpecs: {
+    paragraph,
+    heading: createHeadingBlockSpec({ levels: [1, 2, 3], allowToggleHeadings: false }),
+    bulletListItem,
+    numberedListItem,
+    checkListItem,
+    quote,
+    codeBlock,
+    divider,
+    callout: CalloutBlock(),
+    chart: ChartBlock(),
+    tradePlan: TradePlanBlock(),
+    prediction: PredictionBlock(),
+  },
+  inlineContentSpecs: {
+    ...defaultInlineContentSpecs,
+    notebookLink: NotebookLink,
+  },
+});
+
+export type PageEditor = typeof schema.BlockNoteEditor;
