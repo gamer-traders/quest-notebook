@@ -184,12 +184,13 @@ All times are ISO 8601 UTC. Candles you typed or drew have no real dates, so the
 - **A space's name is its folder name.** Renaming a space makes its name safe for a folder the same way.
 - **A file renamed outside the app** (same id, new name) takes the new file name as its title.
 - **Loading rules:**
-  - A missing `id` is added and written back. So is a duplicate id, which the later file in path order gives up.
+  - A missing `id` is added and written back, in page-shaped files only (a JSON object with a `blocks` list). Of two files sharing an id, the one that had it before keeps it; on a first scan, the later file in path order gives it up.
   - A missing `title` comes from the file name.
   - A missing `position` puts the page after its siblings.
   - A missing `created` or `updated` takes the file's time.
   - A folder with no matching page file becomes a page: its file is written with the folder's name as the title.
-  - Files the app can't parse show in the sidebar with the error and are never written over. They reload when fixed.
+  - Files the app can't parse, and JSON that isn't page-shaped, show in the sidebar with the reason and are never written to. They reload when fixed.
+  - Opening a folder that already has files in it, and isn't a workspace yet, asks first, since its folders will gain page files.
   - Block types the app doesn't know are kept as code blocks holding their JSON, so nothing is lost.
   - Fields the app doesn't know are dropped the next time the app saves that page. The README says so.
   - Files at the workspace root, folders starting with `.`, and files that aren't `.json` are ignored.
@@ -202,6 +203,7 @@ All times are ISO 8601 UTC. Candles you typed or drew have no real dates, so the
   - Changes are batched, about 300 ms after the last edit. Only pages whose JSON changed are written.
   - Writes are atomic: the app writes a temporary file, then renames it.
   - A save that fails shows a banner saying changes aren't being saved, with the error.
+  - Spaces are only made or trashed when the window says so explicitly. A save planned before a page changed on disk is refused and planned again. Both came from the final review.
 - **Conflicts:** an external change to a page with edits the app hasn't saved yet loses to those edits. Otherwise the disk wins.
 - **Closing:** closing the window or switching workspace waits for pending saves, up to 3 seconds.
 - **Deleting** moves files to the system Trash, not permanent deletion. The confirmation dialogs stay as they are.

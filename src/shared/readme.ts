@@ -124,7 +124,7 @@ The \`text\` of a block uses Markdown-style marks:
 
 ## Good to know
 
-- **Unreadable files:** a file that isn't valid JSON is shown in the app with the error, and never overwritten. Fix it and it reloads.
+- **Unreadable files:** a file that isn't valid JSON, or is JSON but not a page (a page is an object with a \`blocks\` list), is shown in the app with the reason, and never written to. Fix it and it reloads.
 - **Fields the app doesn't know** are dropped the next time the app saves that page.
 - **Deleting** a page or space in the app moves its files to the system Trash.
 `;
