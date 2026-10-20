@@ -77,12 +77,10 @@ function createWindow(): BrowserWindow {
     if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
+  // The app is one page and never navigates: a dropped file or a stray link would replace it.
   created.webContents.on('will-navigate', (e, url) => {
-    const own = process.env.ELECTRON_RENDERER_URL ? url.startsWith(process.env.ELECTRON_RENDERER_URL) : url.startsWith('file://');
-    if (!own) {
-      e.preventDefault();
-      if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
-    }
+    e.preventDefault();
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
   });
 
   // Closing waits for the last edits to be saved.

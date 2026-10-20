@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { deletePageLabel, deletePageQuestion, deleteSpaceQuestion } from './labels';
+import { deletePageLabel, deletePageQuestion, deleteSpaceQuestion, trashFileQuestion } from './labels';
 
 test('the page delete item names how many sub-pages go with it', () => {
   expect(deletePageLabel(0)).toBe('Delete page');
@@ -13,4 +13,9 @@ test('the confirmations read as written', () => {
   expect(deletePageQuestion('Weekly levels', 3)).toBe('Delete “Weekly levels” and its 3 sub-pages?');
   expect(deleteSpaceQuestion('Crypto', 1)).toBe('Delete the space “Crypto” and its 1 page?');
   expect(deleteSpaceQuestion('Crypto', 4)).toBe('Delete the space “Crypto” and its 4 pages?');
+});
+
+test('moving an unreadable page to the Trash names its sub-pages too', () => {
+  expect(trashFileQuestion('Markets/Bad.json', 0)).toBe('Move “Markets/Bad.json” to the Trash?');
+  expect(trashFileQuestion('Markets/Bad.json', 2)).toBe('Move “Markets/Bad.json” and its 2 sub-pages to the Trash?');
 });

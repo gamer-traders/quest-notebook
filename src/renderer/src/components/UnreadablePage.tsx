@@ -1,11 +1,14 @@
 import type { Notebook } from '../types';
 import { useStore } from '../store';
 import { PagePath } from './PagePath';
+import { descendantIds } from '../page/tree';
+import { trashFileQuestion } from './sidebar/labels';
 
 /** A page whose file couldn't be read: what went wrong, and where. The app never writes over it. */
 export function UnreadablePage({ page }: { page: Notebook }) {
   const remove = () => {
-    if (window.confirm(`Move “${page.path ?? page.title}” to the Trash?`)) useStore.getState().deletePage(page.id);
+    const count = descendantIds(useStore.getState().notebooks, page.id).length;
+    if (window.confirm(trashFileQuestion(page.path ?? page.title, count))) useStore.getState().deletePage(page.id);
   };
   return (
     <article className="notebook unreadable-page" aria-label={page.title}>
@@ -15,7 +18,7 @@ export function UnreadablePage({ page }: { page: Notebook }) {
       <pre className="unreadable-error">{page.loadError}</pre>
       <p>Fix the file and it reloads by itself. Quest Notebook won't write over it until then.</p>
       <button className="quiet danger" onClick={remove}>
-        Move the file to the Trash
+        Move to the Trash…
       </button>
     </article>
   );
