@@ -293,7 +293,8 @@ export function startSync<S extends SyncedState>(api: QuestApi['workspace'], sto
     },
 
     pendingIds() {
-      const pending = new Set(dirty);
+      // Pages waiting only to have fields written back aren't edits: an outside change still reaches them.
+      const pending = new Set<string>();
       const sent = new Map(prev.notebooks.map((n) => [n.id, n]));
       for (const nb of store.getState().notebooks) if (sent.get(nb.id) !== nb) pending.add(nb.id);
       return pending;

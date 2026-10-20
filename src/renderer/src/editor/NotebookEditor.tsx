@@ -105,6 +105,9 @@ export function NotebookEditor({ notebook }: { notebook: Notebook }): JSX.Elemen
 
   // Closing the tab, or switching notebooks, right after typing still saves the last words.
   // Some browsers close a tab without a pagehide, but the page always turns hidden first.
+  // Main asks for pending saves before the window closes or the workspace switches.
+  useEffect(() => unsavedEditors.register(notebookId, saver.flush), [notebookId, saver]);
+
   useEffect(() => {
     const flush = () => saver.flush();
     const flushIfHidden = () => document.visibilityState === 'hidden' && saver.flush();

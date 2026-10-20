@@ -33,8 +33,9 @@ export function markDirty(ids: Iterable<string>): void {
   sync?.markDirty(ids);
 }
 
-/** Sends everything not yet sent. Main asks for this before the window closes. */
+/** Sends everything not yet sent, including words still waiting in an editor. Main asks for this before the window closes. */
 export async function flushWorkspace(): Promise<void> {
+  unsavedEditors.flushAll();
   await sync?.flush();
 }
 
@@ -56,6 +57,17 @@ export function applyDisk(delta: DiskDelta): void {
   sync.applyFromDisk(() => useStore.getState().applyDiskDelta(filtered), delta.seq);
   // Pages renamed through their file name, or missing fields, are written back whole.
   if (repaired.size) sync.markDirty(repaired);
+
+  // A page being edited keeps its edit, but goes where its file went, so the edit is saved there.
+  const moved = new Map(delta.pages.filter((p) => pending.has(p.id) && p.error === undefined).map((p) => [p.id, p]));
+  if (moved.size) {
+    useStore.setState((s) => ({
+      notebooks: s.notebooks.map((nb) => {
+        const to = moved.get(nb.id);
+        return to && (nb.spaceId !== to.spaceId || nb.parentId !== to.parentId) ? { ...nb, spaceId: to.spaceId, parentId: to.parentId, path: to.path } : nb;
+      }),
+    }));
+  }
 }
 
 /**
