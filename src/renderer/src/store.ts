@@ -1,18 +1,25 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
+import type { DiskDelta } from '@shared/ipc';
 import type { ChartCell, ItemData, Notebook, Space } from './types';
 import type { PageBlock } from './page/blockTypes';
 import { itemSequence, pruneItems } from './page/blocks';
 import { childrenOf, deletePageTree, movePage as moveInTree, nextActiveAfterDelete, positionBetween, type Target } from './page/tree';
 import { newChart, uid } from './lib/cells';
 import { todayDate, todayLabel } from './lib/format';
-import { SAMPLE_SPACES, journalPage, paragraph, seedNotebooks } from './lib/seed';
+import { journalPage, paragraph } from './lib/seed';
+import { resolveLinks } from './files/links';
+import { deltaToNotebooks, type LoadedState } from './workspace/load';
 import { DARK_QUERY, DEFAULT_APPEARANCE, appearanceFromSaved, applyAppearance, resolveTheme, type Appearance } from './lib/appearance';
 
 /** The theme the app shows: the owner's choice, with System resolved against the computer. */
 export type Theme = 'light' | 'dark';
 
 interface State {
+  /** The workspace folder open now, or null before one is. */
+  workspace: { root: string; name: string } | null;
+  /** How many times each page was replaced by a change on disk. The editor starts over when it goes up. */
+  diskRevision: Record<string, number>;
   notebooks: Notebook[];
   /** The owner's spaces, in sidebar order. */
   spaces: Space[];
@@ -32,6 +39,12 @@ interface State {
   /** A page whose title field should take focus and select its text once, after it is created. */
   focusTitleId: string | null;
 
+  /** Replaces everything with a workspace read from disk. */
+  loadWorkspace: (root: string, name: string, loaded: LoadedState) => void;
+  /** Takes in pages and spaces changed on disk outside the app. */
+  applyDiskDelta: (delta: DiskDelta) => void;
+  /** Back to no workspace. */
+  closeWorkspace: () => void;
   openNotebook: (id: string, blockId?: string) => void;
   openReview: () => void;
   /** Adds a page last among its siblings and, unless `open` is false, opens it with its title focused. */
@@ -95,9 +108,6 @@ const loadedAppearance = (saved: { appearance?: unknown }): Pick<State, 'appeara
   }
 };
 
-const initialNotebooks = seedNotebooks();
-const firstLesson = childrenOf(initialNotebooks, 'space-lesson', null)[0];
-
 /** A journal page: one with a date. */
 const isJournal = (nb: Notebook) => nb.journalDate !== undefined;
 
@@ -130,18 +140,67 @@ export const useStore = create<State>()(
       };
 
       return {
-        notebooks: initialNotebooks,
-        spaces: SAMPLE_SPACES.map((space) => ({ ...space })),
-        journalSpaceId: 'space-journal',
-        // New users see the lesson's practice page nested under it.
-        expanded: firstLesson ? { [firstLesson.id]: true } : {},
+        workspace: null,
+        diskRevision: {},
+        notebooks: [],
+        spaces: [],
+        journalSpaceId: null,
+        expanded: {},
         panelCollapsed: {},
-        activeId: firstLesson?.id ?? initialNotebooks[0]?.id ?? null,
+        activeId: null,
         view: 'notebook',
         theme: resolveTheme(DEFAULT_APPEARANCE.theme, systemPrefersDark()),
         appearance: DEFAULT_APPEARANCE,
         flashBlockId: null,
         focusTitleId: null,
+
+        loadWorkspace: (root, name, loaded) =>
+          set({
+            workspace: { root, name },
+            diskRevision: {},
+            notebooks: loaded.notebooks,
+            spaces: loaded.spaces,
+            journalSpaceId: loaded.journalSpaceId,
+            expanded: loaded.expanded,
+            panelCollapsed: loaded.panelCollapsed,
+            activeId: loaded.activeId,
+            view: 'notebook',
+            flashBlockId: null,
+            focusTitleId: null,
+          }),
+
+        applyDiskDelta: (delta) =>
+          set((s) => {
+            const { upserts, removed } = deltaToNotebooks(delta, s.notebooks);
+            const replacing = new Map(upserts.map((nb) => [nb.id, nb]));
+            const gone = new Set(removed);
+            const kept = s.notebooks.filter((nb) => !gone.has(nb.id)).map((nb) => replacing.get(nb.id) ?? nb);
+            const known = new Set(kept.map((nb) => nb.id));
+            const next = resolveLinks([...kept, ...upserts.filter((nb) => !known.has(nb.id))], delta.spaces);
+            const diskRevision = { ...s.diskRevision };
+            for (const nb of upserts) diskRevision[nb.id] = (diskRevision[nb.id] ?? 0) + 1;
+
+            let activeId = s.activeId;
+            if (activeId !== null && gone.has(activeId)) {
+              // A file fixed or renamed outside comes back as a new page at the same path: it stays open.
+              const was = s.notebooks.find((nb) => nb.id === activeId);
+              const same = was?.path ? upserts.find((nb) => nb.path === was.path) : undefined;
+              activeId = same?.id ?? nextActiveAfterDelete(s.notebooks, delta.spaces, activeId, next);
+            }
+            return {
+              notebooks: next,
+              spaces: delta.spaces,
+              journalSpaceId: delta.journalSpaceId,
+              diskRevision,
+              activeId,
+              expanded: without(s.expanded, gone),
+              panelCollapsed: without(s.panelCollapsed, gone),
+              flashBlockId: activeId === s.activeId ? s.flashBlockId : null,
+            };
+          }),
+
+        closeWorkspace: () =>
+          set({ workspace: null, diskRevision: {}, notebooks: [], spaces: [], journalSpaceId: null, expanded: {}, panelCollapsed: {}, activeId: null, view: 'notebook', flashBlockId: null, focusTitleId: null }),
 
         // Data for deleted blocks is dropped here rather than on delete, so undoing a delete still finds it.
         // The page already showing is left alone: its editor may hold an undo, or a block not saved yet.

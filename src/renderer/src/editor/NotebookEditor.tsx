@@ -21,6 +21,7 @@ import './editor.css';
 import type { Notebook } from '../types';
 import type { PageBlock } from '../page/blockTypes';
 import { createSaver } from '../lib/saver';
+import { unsavedEditors } from './pending';
 import { useStore } from '../store';
 import { NotebookContext } from './NotebookContext';
 import { itemBlocksExtension } from './itemExtension';
@@ -88,10 +89,19 @@ export function NotebookEditor({ notebook }: { notebook: Notebook }): JSX.Elemen
   const getLinkChoices = useCallback(async (query: string) => linkChoices(useStore.getState().notebooks, query, notebookId), [notebookId]);
   const onLinkChoice = useCallback((choice: LinkChoice) => insertNotebookLink(editor, notebookId, choice), [editor, notebookId]);
 
-  const saver = useMemo(
-    () => createSaver(() => useStore.getState().setBlocks(notebookId, editor.document as unknown as PageBlock[]), 300),
-    [editor, notebookId],
-  );
+  const saver = useMemo(() => {
+    const inner = createSaver(() => {
+      unsavedEditors.clear(notebookId);
+      useStore.getState().setBlocks(notebookId, editor.document as unknown as PageBlock[]);
+    }, 300);
+    return {
+      schedule: () => {
+        unsavedEditors.mark(notebookId);
+        inner.schedule();
+      },
+      flush: inner.flush,
+    };
+  }, [editor, notebookId]);
 
   // Closing the tab, or switching notebooks, right after typing still saves the last words.
   // Some browsers close a tab without a pagehide, but the page always turns hidden first.

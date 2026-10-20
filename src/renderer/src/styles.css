@@ -2225,3 +2225,32 @@ button.twisty:hover {
 .storage-warning {
   border-left-color: var(--down);
 }
+
+/* A page whose file couldn't be read: lined up with the page's text, like the title of any page. */
+
+.unreadable-page > :not(.page-path) {
+  margin-left: var(--page-indent);
+}
+
+.unreadable-page h1 {
+  font-family: var(--prose);
+  font-weight: 600;
+  margin: 12px 0 8px;
+}
+
+.unreadable-path {
+  color: var(--pencil);
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: 0.9em;
+  word-break: break-all;
+}
+
+.unreadable-error {
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 10px 14px;
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--down);
+  border-radius: var(--radius);
+}

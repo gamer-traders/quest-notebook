@@ -8,6 +8,7 @@ import { Backlinks } from './Backlinks';
 import { PagePath } from './PagePath';
 import { SubPagesPanel } from './SubPagesPanel';
 import { deletePageLabel, deletePageQuestion } from './sidebar/labels';
+import { UnreadablePage } from './UnreadablePage';
 
 const isItemType = (type: string) => (ITEM_BLOCK_TYPES as readonly string[]).includes(type);
 
@@ -17,6 +18,7 @@ export function NotebookView() {
   const subPages = useStore((s) => (nb ? descendantIds(s.notebooks, nb.id).length : 0));
   const flash = useStore((s) => s.flashBlockId);
   const focusTitleId = useStore((s) => s.focusTitleId);
+  const revision = useStore((s) => (nb ? (s.diskRevision[nb.id] ?? 0) : 0));
   const titleRef = useRef<HTMLInputElement>(null);
 
   // A page just made from the sidebar or the panel opens with its title ready to type.
@@ -63,13 +65,15 @@ export function NotebookView() {
     return (
       <div className="empty-page">
         <h1>Nothing open</h1>
-        <p>Pick a notebook on the left, or start today's journal.</p>
+        <p>Pick a page on the left, or start today's journal.</p>
         <button className="primary" onClick={openTodayJournal}>
           Start today's journal
         </button>
       </div>
     );
   }
+
+  if (nb.loadError !== undefined) return <UnreadablePage page={nb} />;
 
   return (
     <article className="notebook" aria-label={displayTitle(nb.title)}>
@@ -100,7 +104,8 @@ export function NotebookView() {
       {/* The flash is a style rule rather than a class, so the editor's own DOM is never touched. */}
       {flash && <style>{`.page-editor [data-id="${CSS.escape(flash)}"] > .bn-block { animation: flash 1.6s ease-out; border-radius: var(--radius); }`}</style>}
 
-      <NotebookEditor key={nb.id} notebook={nb} />
+      {/* A change on disk starts the editor over with the new page. */}
+      <NotebookEditor key={`${nb.id}:${revision}`} notebook={nb} />
       <Backlinks notebookId={nb.id} />
     </article>
   );

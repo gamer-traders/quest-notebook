@@ -3,8 +3,7 @@ import type { Root } from 'react-dom/client';
 import { App } from './App';
 import { applyAppearance } from './lib/appearance';
 import { applyTheme, followSystemTheme, useStore } from './store';
-
-// Loaded only once storage holds data in the current shape, because the store reads it on import.
+import { bootWorkspace } from './workspace/session';
 
 // Set the look before the first render, so nothing flashes and charts read the right colours.
 const { appearance, theme } = useStore.getState();
@@ -18,4 +17,5 @@ export function mountApp(root: Root) {
       <App />
     </StrictMode>,
   );
+  void bootWorkspace();
 }

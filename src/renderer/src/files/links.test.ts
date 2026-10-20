@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest';
 import type { Notebook, Space } from '../types';
 import type { NotebookLinkInline, PageBlock } from '../page/blockTypes';
-import { linkWriter, linksTo, resolveLinks } from './links';
+import { findLinkTarget, linkWriter, linksTo, resolveLinks } from './links';
 
 const spaces: Space[] = [
   { id: 'm', name: 'Markets' },
@@ -64,4 +64,12 @@ test('links inside nested blocks resolve too, and already resolved links are lef
 
 test('linksTo lists the pages a page links to', () => {
   expect(linksTo(page('x', 'X', 'm', null, [link('a'), link('b'), link('', 'Nowhere')]))).toEqual(new Set(['a', 'b']));
+});
+
+test('findLinkTarget finds the page a link names, for a link written before its page existed', () => {
+  const notebooks = [page('w', 'Weekly levels'), page('a', 'Notes', 'm'), page('b', 'Notes', 'l')];
+  expect(findLinkTarget(notebooks, spaces, 'Weekly Levels', 'm')).toBe('w');
+  expect(findLinkTarget(notebooks, spaces, 'Lessons/Notes', 'm')).toBe('b');
+  expect(findLinkTarget(notebooks, spaces, 'Notes', 'l')).toBe('b');
+  expect(findLinkTarget(notebooks, spaces, 'Nowhere', 'm')).toBeNull();
 });

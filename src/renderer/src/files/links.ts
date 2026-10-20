@@ -27,17 +27,17 @@ export function linkWriter(notebooks: Notebook[], spaces: Space[]): (link: Noteb
 }
 
 /** Finds the page a link's words name: a title only one page has, then a path, then a title in the linking page's space. */
-function finder(notebooks: Notebook[], spaces: Space[]): (target: string, from: Notebook) => string | null {
+function finder(notebooks: Notebook[], spaces: Space[]): (target: string, fromSpaceId: string) => string | null {
   const byTitle = new Map<string, Notebook[]>();
   for (const nb of notebooks) byTitle.set(key(displayTitle(nb.title)), [...(byTitle.get(key(displayTitle(nb.title))) ?? []), nb]);
   let byPath: Map<string, string> | null = null;
-  return (target, from) => {
+  return (target, fromSpaceId) => {
     const titled = byTitle.get(key(target)) ?? [];
     if (titled.length === 1) return titled[0].id;
     byPath ??= new Map(notebooks.map((nb) => [key(pathKey(notebooks, spaces, nb.id)), nb.id]));
     const pathed = byPath.get(key(target));
     if (pathed) return pathed;
-    if (titled.length > 1) return (titled.find((nb) => nb.spaceId === from.spaceId) ?? titled[0]).id;
+    if (titled.length > 1) return (titled.find((nb) => nb.spaceId === fromSpaceId) ?? titled[0]).id;
     return null;
   };
 }
@@ -58,7 +58,7 @@ export function resolveLinks(notebooks: Notebook[], spaces: Space[]): Notebook[]
           content = block.content.map((part) => {
             if (part?.type !== 'notebookLink' || part.props?.notebookId || !part.props?.target) return part;
             find ??= finder(notebooks, spaces);
-            const id = find(part.props.target, nb);
+            const id = find(part.props.target, nb.spaceId);
             if (!id) return part;
             changed = true;
             return { ...part, props: { ...part.props, notebookId: id } };
@@ -71,6 +71,11 @@ export function resolveLinks(notebooks: Notebook[], spaces: Space[]): Notebook[]
     const blocks = resolveBlocks(nb.blocks);
     return changed ? { ...nb, blocks } : nb;
   });
+}
+
+/** The page a link's words name, seen from a page in `fromSpaceId`, or null when there is none. */
+export function findLinkTarget(notebooks: Notebook[], spaces: Space[], target: string, fromSpaceId: string): string | null {
+  return target.trim() ? finder(notebooks, spaces)(target, fromSpaceId) : null;
 }
 
 /** The pages a page links to. */

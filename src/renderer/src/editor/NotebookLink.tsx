@@ -1,5 +1,8 @@
 import { createReactInlineContentSpec, useComponentsContext, useDictionary, type SuggestionMenuProps } from '@blocknote/react';
 import { DELETED_NOTEBOOK } from '../page/blocks';
+import { findLinkTarget } from '../files/links';
+import { useContext } from 'react';
+import { NotebookContext } from './NotebookContext';
 import { useStore } from '../store';
 import { linkClosing } from './inlineRules';
 import { linkChoiceLabel, linkChoicePath, notebookTitled, type LinkChoice } from './linkItems';
@@ -10,7 +13,15 @@ import type { PageEditor } from './schema';
  * A link read from a page file that names no page yet shows the words it was written with.
  */
 function NotebookLinkChip({ notebookId, target }: { notebookId: string; target: string }) {
-  const title = useStore((s) => (notebookId ? (s.notebooks.find((n) => n.id === notebookId)?.title ?? null) : null));
+  const pageId = useContext(NotebookContext);
+  // A link written in a file before its page existed finds the page by its words once it's there.
+  const id = useStore((s) => {
+    if (notebookId && s.notebooks.some((n) => n.id === notebookId)) return notebookId;
+    if (!target) return notebookId;
+    const from = s.notebooks.find((n) => n.id === pageId)?.spaceId ?? '';
+    return findLinkTarget(s.notebooks, s.spaces, target, from) ?? notebookId;
+  });
+  const title = useStore((s) => (id ? (s.notebooks.find((n) => n.id === id)?.title ?? null) : null));
 
   if (title === null && target) {
     return (
@@ -27,7 +38,7 @@ function NotebookLinkChip({ notebookId, target }: { notebookId: string; target: 
     );
   }
   return (
-    <span className="notebook-link" role="button" onClick={() => useStore.getState().openNotebook(notebookId)}>
+    <span className="notebook-link" role="button" onClick={() => useStore.getState().openNotebook(id)}>
       {title || 'Untitled'}
     </span>
   );

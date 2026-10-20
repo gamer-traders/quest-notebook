@@ -443,13 +443,11 @@ test('seed nests the practice notebook under Support and resistance', () => {
   expect(titles(childrenOf(seed, 'space-market', null))).toEqual(['Bitcoin, big picture']);
   expect(titles(childrenOf(seed, 'space-lesson', null))).toEqual(['Support and resistance']);
 
-  // New users land on the lesson, with its sub-page showing in the sidebar.
+});
+
+test('the app starts with no workspace and no pages, until one is loaded', () => {
   const initial = useStore.getInitialState();
-  const lesson = initial.notebooks.find((n) => n.title === 'Support and resistance')!;
-  expect(initial.spaces).toEqual(SAMPLE_SPACES);
-  expect(initial.journalSpaceId).toBe('space-journal');
-  expect(initial.activeId).toBe(lesson.id);
-  expect(initial.expanded).toEqual({ [lesson.id]: true });
+  expect(initial).toMatchObject({ workspace: null, notebooks: [], spaces: [], activeId: null, journalSpaceId: null, diskRevision: {} });
 });
 
 test('seed notebooks keep their charts linked', () => {
@@ -460,4 +458,40 @@ test('seed notebooks keep their charts linked', () => {
   expect(seededChart.levels).toHaveLength(2);
   expect(seededChart.trends).toHaveLength(1);
   expect(seededChart.pins).toHaveLength(2);
+});
+
+const record = (id: string, path: string, parentId: string | null, title: string, extra: object = {}) => ({
+  id, spaceId: 'A', parentId, path, mtimeMs: 0, file: { id, title, position: 0, created: '2026-10-20T00:00:00Z', updated: '2026-10-20T00:00:00Z', blocks: [], ...extra },
+});
+
+test('applyDiskDelta replaces changed pages, removes gone ones, and bumps their disk revision', () => {
+  useTree('p2');
+  state().toggleExpanded('p2');
+  state().applyDiskDelta({
+    spaces: SPACES,
+    journalSpaceId: 'space-journal',
+    pages: [record('p1', 'A/p1.json', null, 'Renamed outside')],
+    removed: ['p2'],
+  });
+  expect(notebook('p1').title).toBe('Renamed outside');
+  expect(state().notebooks.some((n) => n.id === 'p2')).toBe(false);
+  expect(state().diskRevision).toEqual({ p1: 1 });
+  expect(state().expanded).toEqual({});
+  // The open page went, and nothing comes after it, so the page before it opens.
+  expect(state().activeId).toBe('p1');
+});
+
+test('applyDiskDelta takes the spaces from disk', () => {
+  useTree();
+  const spaces = [...SPACES, { id: 'C', name: 'Ideas' }];
+  state().applyDiskDelta({ spaces, journalSpaceId: null, pages: [], removed: [] });
+  expect(state().spaces).toEqual(spaces);
+  expect(state().journalSpaceId).toBeNull();
+});
+
+test('a page whose file is fixed stays open under its real id', () => {
+  useStore.setState({ notebooks: [page('bad:A/x.json', 'A', null, 0, { path: 'A/x.json', loadError: 'broken' })], spaces: SPACES, activeId: 'bad:A/x.json' });
+  state().applyDiskDelta({ spaces: SPACES, journalSpaceId: null, pages: [record('x1', 'A/x.json', null, 'X')], removed: ['bad:A/x.json'] });
+  expect(state().activeId).toBe('x1');
+  expect(notebook('x1').loadError).toBeUndefined();
 });
