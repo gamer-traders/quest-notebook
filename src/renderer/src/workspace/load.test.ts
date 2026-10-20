@@ -66,6 +66,7 @@ test('with no open page saved, the first page of the first space opens', () => {
 test('a delta keeps positions of pages that lose theirs, and a renamed file renames the page', () => {
   const current = snapshotToState(snapshot([record('a', 'Markets/A.json', null, file('a', 'A', { position: 2 }))])).notebooks;
   const delta: DiskDelta = {
+    seq: 1,
     spaces: [{ id: 'sm', name: 'Markets' }],
     journalSpaceId: null,
     pages: [{ ...record('a', 'Markets/Alpha.json', null, { id: 'a', title: 'A', blocks: [] }), titleFromPath: 'Alpha' }],

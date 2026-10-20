@@ -468,6 +468,7 @@ test('applyDiskDelta replaces changed pages, removes gone ones, and bumps their 
   useTree('p2');
   state().toggleExpanded('p2');
   state().applyDiskDelta({
+    seq: 1,
     spaces: SPACES,
     journalSpaceId: 'space-journal',
     pages: [record('p1', 'A/p1.json', null, 'Renamed outside')],
@@ -484,14 +485,14 @@ test('applyDiskDelta replaces changed pages, removes gone ones, and bumps their 
 test('applyDiskDelta takes the spaces from disk', () => {
   useTree();
   const spaces = [...SPACES, { id: 'C', name: 'Ideas' }];
-  state().applyDiskDelta({ spaces, journalSpaceId: null, pages: [], removed: [] });
+  state().applyDiskDelta({ seq: 1, spaces, journalSpaceId: null, pages: [], removed: [] });
   expect(state().spaces).toEqual(spaces);
   expect(state().journalSpaceId).toBeNull();
 });
 
 test('a page whose file is fixed stays open under its real id', () => {
   useStore.setState({ notebooks: [page('bad:A/x.json', 'A', null, 0, { path: 'A/x.json', loadError: 'broken' })], spaces: SPACES, activeId: 'bad:A/x.json' });
-  state().applyDiskDelta({ spaces: SPACES, journalSpaceId: null, pages: [record('x1', 'A/x.json', null, 'X')], removed: ['bad:A/x.json'] });
+  state().applyDiskDelta({ seq: 1, spaces: SPACES, journalSpaceId: null, pages: [record('x1', 'A/x.json', null, 'X')], removed: ['bad:A/x.json'] });
   expect(state().activeId).toBe('x1');
   expect(notebook('x1').loadError).toBeUndefined();
 });

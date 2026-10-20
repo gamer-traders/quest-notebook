@@ -31,6 +31,8 @@ test('the app’s own writes are quiet', async () => {
   const lessons = known.spaces.find((s) => s.name === 'Lessons')!.id;
   const batch = {
     spaces: [...known.spaces].reverse(),
+    createdSpaces: [],
+    deletedSpaces: [],
     journalSpaceId: lessons,
     saves: [
       { id: 'a', spaceId: lessons, parentId: null, title: 'A moved', json: page('a', 'A moved') },

@@ -97,7 +97,19 @@ export function planFlush(prev: SyncSlice, next: SyncSlice, baseline: Baseline, 
 
   const spacesChanged = prev.spaces !== next.spaces || prev.journalSpaceId !== next.journalSpaceId;
   if (!saves.length && !deletes.length && !spacesChanged) return { batch: null, baseline: out };
-  return { batch: { spaces: next.spaces, journalSpaceId: next.journalSpaceId, saves, deletes }, baseline: out };
+  const had = new Set(prev.spaces.map((s) => s.id));
+  const has = new Set(next.spaces.map((s) => s.id));
+  return {
+    batch: {
+      spaces: next.spaces,
+      createdSpaces: next.spaces.filter((s) => !had.has(s.id)).map((s) => s.id),
+      deletedSpaces: prev.spaces.filter((s) => !has.has(s.id)).map((s) => s.id),
+      journalSpaceId: next.journalSpaceId,
+      saves,
+      deletes,
+    },
+    baseline: out,
+  };
 }
 
 interface SyncedState extends SyncSlice {
@@ -110,8 +122,8 @@ interface SyncedState extends SyncSlice {
 export interface SyncHandle {
   /** Sends everything not yet sent, and waits until main has written it. */
   flush(): Promise<void>;
-  /** Runs a store update that came from disk: nothing in it is sent back. */
-  applyFromDisk(update: () => void): void;
+  /** Runs a store update that came from disk, change number `seq`: nothing in it is sent back. */
+  applyFromDisk(update: () => void, seq?: number): void;
   /** Pages to write back even if nothing in them changes, such as files that were missing fields. */
   markDirty(ids: Iterable<string>): void;
   /** Pages with edits not yet sent to disk. An outside change to one of them loses to the edit. */
@@ -148,6 +160,8 @@ export function startSync<S extends SyncedState>(api: QuestApi['workspace'], sto
   let uiTimer: ReturnType<typeof setTimeout> | null = null;
   let inFlight: Promise<void> | null = null;
   let lastUi = JSON.stringify(uiOf(store.getState()));
+  // The last disk change taken in. Main refuses saves of pages that changed on disk after it.
+  let seenSeq = 0;
 
   const schedule = (delay = SAVE_DELAY) => {
     if (stopped) return;
@@ -172,9 +186,15 @@ export function startSync<S extends SyncedState>(api: QuestApi['workspace'], sto
   async function send(batch: FlushBatch) {
     let failed: string[] = [];
     try {
-      const result = await api.flush({ ...batch, root });
+      const result = await api.flush({ ...batch, root, seenSeq });
       useSaveStatus.setState({ error: result.ok ? null : (result.error ?? 'Saving failed') });
       if (!result.ok) failed = batch.saves.filter((s) => !(s.id in result.paths)).map((s) => s.id);
+      // Saves of pages that changed on disk meanwhile are planned again, from the page as it is now.
+      for (const id of result.stale ?? []) {
+        baseline.delete(id);
+        dirty.add(id);
+      }
+      if (result.stale?.length) schedule();
     } catch (error) {
       useSaveStatus.setState({ error: message(error) });
       failed = batch.saves.map((s) => s.id);
@@ -226,7 +246,8 @@ export function startSync<S extends SyncedState>(api: QuestApi['workspace'], sto
       await saveUi();
     },
 
-    applyFromDisk(update) {
+    applyFromDisk(update, seq) {
+      if (seq !== undefined && seq > seenSeq) seenSeq = seq;
       const before = store.getState();
       fromDisk = true;
       try {

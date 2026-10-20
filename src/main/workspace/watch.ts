@@ -2,6 +2,7 @@ import { watch, type FSWatcher } from 'node:fs';
 import type { DiskDelta, FlushBatch, SpaceRecord } from '@shared/ipc';
 import { safeName } from '@shared/names';
 import type { ScanIndex, ScanResult } from './scan';
+import { spaceOrder } from './apply';
 import { STATE_PATH } from './scan';
 
 /**
@@ -20,15 +21,12 @@ export const knownFromScan = (result: ScanResult): Known => ({
   index: result.index,
 });
 
-/** After the app's own flush: the spaces it asked for, under the folder names they got. The index is already up to date. */
+/** After the app's own flush: the spaces in the order it wrote them, under their folder names. The index is already up to date. */
 export function knownAfterFlush(known: Known, batch: FlushBatch): Known {
   if (batch.spaces.length === 0) return known;
-  const folderOf = new Map([...known.index.spaceIds].map(([folder, id]) => [id, folder]));
-  const spaces = batch.spaces.flatMap((s) => {
-    const folder = folderOf.get(s.id);
-    return folder === undefined ? [] : [{ id: s.id, name: folder }];
-  });
-  return { ...known, spaces, journalSpaceId: spaces.some((s) => s.id === batch.journalSpaceId) ? batch.journalSpaceId : null };
+  const spaces = spaceOrder(batch, known.index).map((folder) => ({ id: known.index.spaceIds.get(folder)!, name: folder }));
+  const journalKnown = spaces.some((s) => s.id === batch.journalSpaceId);
+  return { ...known, spaces, journalSpaceId: batch.journalSpaceId === null ? null : journalKnown ? batch.journalSpaceId : known.journalSpaceId };
 }
 
 const baseOf = (path: string) => path.slice(path.lastIndexOf('/') + 1).replace(/\.json$/i, '');
@@ -51,7 +49,7 @@ function titleIn(text: string): unknown {
 const sameSpaces = (a: SpaceRecord[], b: SpaceRecord[]) => a.length === b.length && a.every((s, i) => s.id === b[i].id && s.name === b[i].name);
 
 /** What a fresh scan found that main didn't know: pages added, changed, moved or gone, and the spaces. Null for nothing. */
-export function diffScans(prev: Known, next: ScanResult): DiskDelta | null {
+export function diffScans(prev: Known, next: ScanResult): Omit<DiskDelta, 'seq'> | null {
   const pages = next.snapshot.pages.flatMap((record) => {
     const before = prev.index.pages.get(record.id);
     const now = next.index.pages.get(record.id);

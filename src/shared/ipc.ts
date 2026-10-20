@@ -65,11 +65,19 @@ export interface PageSave {
   json: string;
 }
 
-/** Everything that changed since the last flush. `spaces` is always the whole list, in order. */
+/**
+ * Everything that changed since the last flush. `spaces` is the window's whole list, in order, for names and
+ * order. Spaces are only ever made or trashed when named in `createdSpaces` or `deletedSpaces`: a batch
+ * planned just before a folder changed on disk mustn't undo that change.
+ */
 export interface FlushBatch {
   /** The workspace the batch was made for. Main refuses it if another workspace is open by now. */
   root?: string;
   spaces: SpaceRecord[];
+  createdSpaces: string[];
+  deletedSpaces: string[];
+  /** The last disk change the window had taken in when it planned this. */
+  seenSeq?: number;
   journalSpaceId: string | null;
   saves: PageSave[];
   deletes: string[];
@@ -81,10 +89,14 @@ export interface FlushResult {
   error?: string;
   /** Where each saved page now is. */
   paths: Record<string, string>;
+  /** Pages left alone because they changed on disk after the batch was planned: the window plans them again. */
+  stale?: string[];
 }
 
 /** What changed on disk, outside the app. `spaces` is always the whole list, in order. */
 export interface DiskDelta {
+  /** Counts up with each change main reports, so a batch can say which ones it was planned after. */
+  seq: number;
   spaces: SpaceRecord[];
   journalSpaceId: string | null;
   /** Pages added or changed, with where they are now. */

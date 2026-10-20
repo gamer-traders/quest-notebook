@@ -53,7 +53,7 @@ export function applyDisk(delta: DiskDelta): void {
     removed: delta.removed.filter((id) => !pending.has(id)),
   };
   const { repaired } = deltaToNotebooks(filtered, current);
-  sync.applyFromDisk(() => useStore.getState().applyDiskDelta(filtered));
+  sync.applyFromDisk(() => useStore.getState().applyDiskDelta(filtered), delta.seq);
   // Pages renamed through their file name, or missing fields, are written back whole.
   if (repaired.size) sync.markDirty(repaired);
 }

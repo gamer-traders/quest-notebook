@@ -52,36 +52,41 @@ export async function applyFlush(root: string, index: ScanIndex, batch: FlushBat
   const spaceFolder = new Map<string, string>();
   for (const [folder, id] of index.spaceIds) spaceFolder.set(id, folder);
 
-  // ---- Spaces ----
-  if (batch.spaces.length === 0) {
-    // The app never leaves a workspace without a space, so an empty list is a mistake, not a request to trash them all.
-    errors.push('A workspace keeps at least one space');
-  } else {
-    const wanted = new Set(batch.spaces.map((s) => s.id));
-    for (const [id, folder] of [...spaceFolder]) {
-      if (wanted.has(id)) continue;
+  // ---- Spaces: made and trashed only when the batch says so ----
+  if (batch.spaces.length === 0) errors.push('A workspace keeps at least one space');
+  const deletedSpaces = new Set(batch.deletedSpaces);
+  const createdSpaces = new Set(batch.createdSpaces);
+  for (const id of deletedSpaces) {
+    const folder = spaceFolder.get(id);
+    if (folder === undefined) continue;
+    try {
       if (await exists(folder)) await deps.trash(abs(folder));
       dropUnder(folder);
       index.spaceIds.delete(folder);
       spaceFolder.delete(id);
+    } catch (error) {
+      errors.push(`Couldn't delete the space “${folder}”: ${message(error)}`);
     }
-    for (const space of batch.spaces) {
-      try {
-        const current = spaceFolder.get(space.id);
-        const taken = (await readdir(root, { withFileTypes: true })).filter((e) => e.isDirectory() && e.name !== current).map((e) => e.name);
-        const name = current !== undefined && safeName(space.name) === current ? current : uniqueName(safeName(space.name), taken);
-        if (current === undefined) {
-          await mkdir(abs(name), { recursive: true });
-        } else if (name !== current) {
-          await move(current, name);
-          repoint(current, name);
-          index.spaceIds.delete(current);
-        } else continue;
-        index.spaceIds.set(name, space.id);
-        spaceFolder.set(space.id, name);
-      } catch (error) {
-        errors.push(`Couldn't update the space “${space.name}”: ${message(error)}`);
-      }
+  }
+  for (const space of batch.spaces) {
+    if (deletedSpaces.has(space.id)) continue;
+    const current = spaceFolder.get(space.id);
+    // A space main doesn't know, and wasn't asked to make, changed on disk since the batch was planned.
+    if (current === undefined && !createdSpaces.has(space.id)) continue;
+    try {
+      const taken = (await readdir(root, { withFileTypes: true })).filter((e) => e.isDirectory() && e.name !== current).map((e) => e.name);
+      const name = current !== undefined && safeName(space.name) === current ? current : uniqueName(safeName(space.name), taken);
+      if (current === undefined) {
+        await mkdir(abs(name));
+      } else if (name !== current) {
+        await move(current, name);
+        repoint(current, name);
+        index.spaceIds.delete(current);
+      } else continue;
+      index.spaceIds.set(name, space.id);
+      spaceFolder.set(space.id, name);
+    } catch (error) {
+      errors.push(`Couldn't update the space “${space.name}”: ${message(error)}`);
     }
   }
 
@@ -170,7 +175,13 @@ export async function applyFlush(root: string, index: ScanIndex, batch: FlushBat
     try {
       const config = await readConfig(root);
       const journal = batch.journalSpaceId ? spaceFolder.get(batch.journalSpaceId) : undefined;
-      const next = formatJson({ format: 1, name: config.name, spaces: batch.spaces.flatMap((s) => spaceFolder.get(s.id) ?? []), journalSpace: journal ?? null });
+      const next = formatJson({
+        format: 1,
+        name: config.name,
+        spaces: spaceOrder(batch, index),
+        // A journal space the window names but main doesn't know keeps the one on disk.
+        journalSpace: batch.journalSpaceId === null ? null : (journal ?? config.journalSpace),
+      });
       const current = await readFile(abs(CONFIG_PATH), 'utf8').catch(() => null);
       if (current !== next) {
         await mkdir(abs('.quest'), { recursive: true });
@@ -185,3 +196,10 @@ export async function applyFlush(root: string, index: ScanIndex, batch: FlushBat
 }
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/** Space folders in order: those the batch lists, in its order, then any others main knows, as they were. */
+export function spaceOrder(batch: FlushBatch, index: ScanIndex): string[] {
+  const folderOf = new Map([...index.spaceIds].map(([folder, id]) => [id, folder]));
+  const listed = batch.spaces.flatMap((s) => folderOf.get(s.id) ?? []);
+  return [...listed, ...[...index.spaceIds.keys()].filter((folder) => !listed.includes(folder))];
+}

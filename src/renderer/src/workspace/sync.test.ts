@@ -72,7 +72,7 @@ test('renaming a space sends the spaces', () => {
   const { prev, baseline } = start([nb('n1', 'One')]);
   const renamed = spaces.map((s) => (s.id === 'sm' ? { ...s, name: 'Crypto' } : s));
   const { batch } = plan(prev, { spaces: renamed }, baseline);
-  expect(batch).toEqual({ spaces: renamed, journalSpaceId: null, saves: [], deletes: [] });
+  expect(batch).toEqual({ spaces: renamed, createdSpaces: [], deletedSpaces: [], journalSpaceId: null, saves: [], deletes: [] });
 });
 
 test('a page whose file could not be read is never saved', () => {
@@ -86,4 +86,11 @@ test('pages marked dirty are saved even when unchanged', () => {
   const baseline = baselineFor(prev, new Set(['n1']));
   const { batch } = planFlush(prev, prev, baseline, new Set(['n1']));
   expect(batch!.saves.map((s) => s.id)).toEqual(['n1']);
+});
+
+test('new and deleted spaces are named in the batch', () => {
+  const { prev, baseline } = start([nb('n1', 'One')]);
+  const next = [...spaces.filter((s) => s.id !== 'sl'), { id: 'si', name: 'Ideas' }];
+  const { batch } = plan(prev, { spaces: next }, baseline);
+  expect(batch).toMatchObject({ createdSpaces: ['si'], deletedSpaces: ['sl'] });
 });

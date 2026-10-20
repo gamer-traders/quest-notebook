@@ -58,6 +58,7 @@ test('loading a workspace sends nothing back', async () => {
 test('a change from disk is not sent back, and a later edit sends only that page', async () => {
   sync.applyFromDisk(() =>
     useStore.getState().applyDiskDelta({
+      seq: 1,
       spaces: snapshot.spaces,
       journalSpaceId: null,
       pages: [{ ...snapshot.pages[0], file: file('a', 'A', 'written by an AI') }],
@@ -103,6 +104,7 @@ test('a failed save shows the error and is tried again', async () => {
 test('a page marked dirty after a change from disk is written back, even though nothing in it changed', async () => {
   sync.applyFromDisk(() =>
     useStore.getState().applyDiskDelta({
+      seq: 1,
       spaces: snapshot.spaces,
       journalSpaceId: null,
       pages: [{ ...snapshot.pages[1], file: { id: 'b', title: 'B', blocks: [] } }],
@@ -125,4 +127,17 @@ test('pages missing fields when the workspace loads are written back without wai
   await vi.advanceTimersByTimeAsync(400);
   expect(batches).toHaveLength(1);
   expect(batches[0].saves.map((s) => s.id)).toEqual(['a']);
+});
+
+test('batches say which disk change the window has seen, and saves refused as stale are planned again', async () => {
+  vi.useFakeTimers();
+  sync.applyFromDisk(() => useStore.getState().applyDiskDelta({ seq: 1, spaces: snapshot.spaces, journalSpaceId: null, pages: [], removed: [] }), 4);
+  flushResult = async () => ({ ok: true, paths: {}, stale: ['a'] });
+  useStore.getState().updateNotebook('a', { title: 'A3' });
+  await sync.flush();
+  expect(batches[0].seenSeq).toBe(4);
+  flushResult = async () => ({ ok: true, paths: { a: 'Markets/A3.json' } });
+  await vi.advanceTimersByTimeAsync(400);
+  expect(batches).toHaveLength(2);
+  expect(batches[1].saves.map((s) => s.id)).toEqual(['a']);
 });

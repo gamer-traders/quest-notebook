@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { beforeEach, expect, test } from 'vitest';
@@ -38,7 +38,7 @@ const deps = () => ({
 
 const space = (name: string) => spaces.find((s) => s.name === name)!.id;
 const save = (id: string, title: string, spaceName = 'Markets', parentId: string | null = null, json = page(id, title)): PageSave => ({ id, spaceId: space(spaceName), parentId, title, json });
-const batch = (patch: Partial<FlushBatch>): FlushBatch => ({ spaces, journalSpaceId: null, saves: [], deletes: [], ...patch });
+const batch = (patch: Partial<FlushBatch>): FlushBatch => ({ spaces, createdSpaces: [], deletedSpaces: [], journalSpaceId: null, saves: [], deletes: [], ...patch });
 const apply = (patch: Partial<FlushBatch>) => applyFlush(root, index, batch(patch), deps());
 const read = (rel: string) => readFile(join(root, rel), 'utf8');
 const exists = (rel: string) => access(join(root, rel)).then(() => true, () => false);
@@ -144,14 +144,34 @@ test('renaming a space renames its folder, and workspace.json follows', async ()
   expect(JSON.parse(await read('.quest/workspace.json'))).toMatchObject({ format: 1, spaces: ['Lessons', 'Crypto- alts'], journalSpace: 'Crypto- alts' });
 });
 
-test('a new space makes a folder, and a space left out goes to the trash', async () => {
+test('a new space makes a folder, and a deleted one goes to the trash', async () => {
   await setup({ 'Markets/A.json': page('a', 'A'), 'Lessons/': '' });
+  const markets = space('Markets');
   const next = [...spaces.filter((s) => s.name !== 'Markets'), { id: 's_new', name: 'Ideas' }];
-  await applyFlush(root, index, batch({ spaces: next }), deps());
+  await applyFlush(root, index, batch({ spaces: next, createdSpaces: ['s_new'], deletedSpaces: [markets] }), deps());
   expect(trashed).toEqual(['Markets']);
   expect(await list('')).toEqual(['.quest', 'Ideas', 'Lessons']);
   expect(index.pages.has('a')).toBe(false);
   expect(index.spaceIds.get('Ideas')).toBe('s_new');
+});
+
+test('a batch planned before a space changed on disk neither trashes nor re-makes spaces', async () => {
+  // The window planned this with the spaces it had; since then a folder was added outside and one renamed.
+  await setup({ 'Markets/A.json': page('a', 'A'), 'Lessons/': '' });
+  const stale = spaces;
+  await rename(join(root, 'Markets'), join(root, 'Crypto'));
+  await mkdir(join(root, 'Ideas'));
+  await writeFile(join(root, 'Ideas/I.json'), page('i', 'I'));
+  index = (await scanWorkspace(root, index)).index;
+  const result = await applyFlush(root, index, batch({ spaces: stale, saves: [save('n', 'New', 'Lessons')] }), deps());
+  expect(trashed).toEqual([]);
+  expect(await list('')).toEqual(['.quest', 'Crypto', 'Ideas', 'Lessons']);
+  expect(await list('Ideas')).toEqual(['I.json']);
+  expect(await list('Crypto')).toEqual(['A.json']);
+  // The save still lands: its space is one main knows.
+  expect(result.paths.n).toBe('Lessons/New.json');
+  // Spaces main knows but the batch didn't list keep their place in workspace.json.
+  expect(JSON.parse(await read('.quest/workspace.json')).spaces).toEqual(['Lessons', 'Crypto', 'Ideas']);
 });
 
 test('a batch with no spaces leaves the spaces alone', async () => {

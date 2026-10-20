@@ -23,6 +23,9 @@ export class WorkspaceSession {
   private closed = false;
   private stopWatching: () => void = () => {};
   private presenceTimer: ReturnType<typeof setInterval> | null = null;
+  /** How many changes have been reported, and which one last touched each page. */
+  private seq = 0;
+  private changedAt = new Map<string, number>();
 
   private constructor(
     readonly root: string,
@@ -71,9 +74,14 @@ export class WorkspaceSession {
     return this.turn(async () => {
       if (this.closed) return { ok: false, error: 'This workspace is closed', paths: {} };
       if (batch.root !== undefined && batch.root !== this.root) return { ok: false, error: 'These changes belong to another workspace', paths: {} };
-      const result = await applyFlush(this.root, this.known.index, batch, { trash: this.trash, now: () => new Date() });
-      this.known = knownAfterFlush(this.known, batch);
-      return result;
+      // A page changed on disk after the window planned this batch is left for the window to plan again.
+      const seen = batch.seenSeq ?? this.seq;
+      const isStale = (id: string) => (this.changedAt.get(id) ?? 0) > seen;
+      const stale = [...batch.saves.map((s) => s.id), ...batch.deletes].filter(isStale);
+      const fresh = { ...batch, saves: batch.saves.filter((s) => !isStale(s.id)), deletes: batch.deletes.filter((id) => !isStale(id)) };
+      const result = await applyFlush(this.root, this.known.index, fresh, { trash: this.trash, now: () => new Date() });
+      this.known = knownAfterFlush(this.known, fresh);
+      return stale.length ? { ...result, stale } : result;
     });
   }
 
@@ -99,7 +107,12 @@ export class WorkspaceSession {
         const delta = diffScans(this.known, next);
         this.known = knownFromScan(next);
         this.snapshot = { ...next.snapshot, isNew: false };
-        if (delta) this.events.change(delta);
+        if (delta) {
+          const seq = ++this.seq;
+          for (const page of delta.pages) this.changedAt.set(page.id, seq);
+          for (const id of delta.removed) this.changedAt.set(id, seq);
+          this.events.change({ ...delta, seq });
+        }
       } catch (error) {
         console.error('Reading the workspace after a change failed:', error);
       }
