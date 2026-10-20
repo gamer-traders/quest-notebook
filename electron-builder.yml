@@ -1,0 +1,15 @@
+appId: com.gamertraders.questnotebook
+productName: Quest Notebook
+directories:
+  output: dist
+# Everything the app runs is bundled into out/ by electron-vite, so no node_modules ship with it.
+files:
+  - out/**
+  - package.json
+mac:
+  category: public.app-category.productivity
+  target:
+    - dmg
+    - dir
+  # Not signed yet: macOS asks before the first launch (right-click → Open).
+  identity: null
