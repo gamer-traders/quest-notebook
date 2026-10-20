@@ -1,0 +1,103 @@
+import { mkdir, stat } from 'node:fs/promises';
+import { join } from 'node:path';
+import { formatJson } from '@shared/formatJson';
+import type { DiskDelta, FlushBatch, FlushResult, UiState, WorkspaceSnapshot } from '@shared/ipc';
+import { applyFlush } from './apply';
+import { insideRoot, writeFileAtomic } from './paths';
+import { STATE_PATH, scanWorkspace } from './scan';
+import { diffScans, knownAfterFlush, knownFromScan, watchWorkspace, type Known } from './watch';
+
+export interface SessionEvents {
+  /** Something changed on disk outside the app. */
+  change(delta: DiskDelta): void;
+  /** The workspace folder is gone. */
+  lost(message: string): void;
+}
+
+/**
+ * One open workspace: its folder, what main knows is in it, and a watcher. Scans and writes take turns,
+ * so a rescan never reads a folder half way through the app's own changes.
+ */
+export class WorkspaceSession {
+  private queue: Promise<unknown> = Promise.resolve();
+  private closed = false;
+  private stopWatching: () => void = () => {};
+
+  private constructor(
+    readonly root: string,
+    private known: Known,
+    public snapshot: WorkspaceSnapshot,
+    private readonly events: SessionEvents,
+    private readonly trash: (abs: string) => Promise<void>,
+  ) {}
+
+  static async open(root: string, isNew: boolean, events: SessionEvents, trash: (abs: string) => Promise<void>): Promise<WorkspaceSession> {
+    const scanned = await scanWorkspace(root);
+    const session = new WorkspaceSession(root, knownFromScan(scanned), { ...scanned.snapshot, isNew }, events, trash);
+    session.stopWatching = watchWorkspace(root, () => void session.rescan());
+    return session;
+  }
+
+  private turn<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.queue.then(work, work);
+    this.queue = next.catch(() => {});
+    return next;
+  }
+
+  get name(): string {
+    return this.snapshot.name;
+  }
+
+  /** A fresh read of the whole workspace, for a window that is loading it from scratch. */
+  fresh(): Promise<WorkspaceSnapshot> {
+    return this.turn(async () => {
+      const scanned = await scanWorkspace(this.root, this.known.index);
+      this.known = knownFromScan(scanned);
+      this.snapshot = { ...scanned.snapshot, isNew: this.snapshot.isNew };
+      return this.snapshot;
+    });
+  }
+
+  flush(batch: FlushBatch): Promise<FlushResult> {
+    return this.turn(async () => {
+      if (this.closed) return { ok: false, error: 'This workspace is closed', paths: {} };
+      const result = await applyFlush(this.root, this.known.index, batch, { trash: this.trash, now: () => new Date() });
+      this.known = knownAfterFlush(this.known, batch);
+      return result;
+    });
+  }
+
+  saveUi(ui: UiState): Promise<void> {
+    return this.turn(async () => {
+      if (this.closed) return;
+      await mkdir(join(this.root, '.quest'), { recursive: true });
+      await writeFileAtomic(insideRoot(this.root, STATE_PATH), formatJson(ui));
+    });
+  }
+
+  private rescan(): Promise<void> {
+    return this.turn(async () => {
+      if (this.closed) return;
+      const present = await stat(this.root).then((s) => s.isDirectory(), () => false);
+      if (!present) {
+        this.close();
+        this.events.lost(`Couldn't find ${this.root}`);
+        return;
+      }
+      try {
+        const next = await scanWorkspace(this.root, this.known.index);
+        const delta = diffScans(this.known, next);
+        this.known = knownFromScan(next);
+        this.snapshot = { ...next.snapshot, isNew: false };
+        if (delta) this.events.change(delta);
+      } catch (error) {
+        console.error('Reading the workspace after a change failed:', error);
+      }
+    });
+  }
+
+  close(): void {
+    this.closed = true;
+    this.stopWatching();
+  }
+}

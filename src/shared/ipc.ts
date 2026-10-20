@@ -90,3 +90,42 @@ export interface DiskDelta {
   /** Ids of pages whose files are gone. */
   removed: string[];
 }
+
+export interface RecentWorkspace {
+  path: string;
+  name: string;
+  /** ISO time. */
+  lastOpened: string;
+}
+
+export type OpenResult = { ok: true; snapshot: WorkspaceSnapshot } | { ok: false; error: string; path?: string };
+
+export type MenuCommand = 'new-workspace' | 'open-workspace' | 'reveal-workspace';
+
+/** `window.quest`: everything the window can ask of the main process. */
+export interface QuestApi {
+  workspaces: {
+    /** The workspace open now (main reopens the last one at launch), or why it couldn't be opened, or null for none. */
+    current(): Promise<OpenResult | null>;
+    recent(): Promise<RecentWorkspace[]>;
+    /** Asks for a folder. Null when the person cancels. */
+    pickFolder(title: string): Promise<string | null>;
+    create(parentDir: string, name: string): Promise<OpenResult>;
+    open(path: string): Promise<OpenResult>;
+    forget(path: string): Promise<void>;
+    reveal(): Promise<void>;
+  };
+  workspace: {
+    flush(batch: FlushBatch): Promise<FlushResult>;
+    saveUi(ui: UiState): Promise<void>;
+    onDiskChange(cb: (delta: DiskDelta) => void): () => void;
+    /** The open workspace's folder went away. */
+    onLost(cb: (message: string) => void): () => void;
+  };
+  app: {
+    /** Main asks for pending saves before the window closes or the workspace switches. */
+    onFlushRequest(cb: () => Promise<void>): () => void;
+    onMenu(cb: (cmd: MenuCommand) => void): () => void;
+    openExternal(url: string): Promise<void>;
+  };
+}

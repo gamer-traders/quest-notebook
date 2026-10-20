@@ -1,13 +1,51 @@
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, shell } from 'electron';
+import { registerIpc } from './ipc';
+import { buildMenu } from './menu';
+import { Workspaces } from './workspaces';
+
+const PRODUCT = 'Quest Notebook';
+
+let win: BrowserWindow | null = null;
+let quitting = false;
+
+const getWindow = () => (win && !win.isDestroyed() ? win : null);
+const send = (channel: string, ...args: unknown[]) => getWindow()?.webContents.send(channel, ...args);
+
+/** Asks the window to save what it hasn't yet, and waits for it, or for three seconds at most. */
+function flushWindow(): Promise<void> {
+  const target = getWindow();
+  if (!target) return Promise.resolve();
+  const nonce = randomUUID();
+  return new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      ipcMain.removeListener('app:flushed', onFlushed);
+      resolve();
+    };
+    const onFlushed = (_e: unknown, n: unknown) => n === nonce && finish();
+    const timer = setTimeout(finish, 3000);
+    ipcMain.on('app:flushed', onFlushed);
+    target.webContents.send('app:flush-request', nonce);
+  });
+}
+
+const workspaces = new Workspaces(join(app.getPath('userData'), 'workspaces.json'), {
+  flushWindow,
+  diskChanged: (delta) => send('workspace:disk-change', delta),
+  lost: (message) => send('workspace:lost', message),
+  opened: (name) => getWindow()?.setTitle(name ? `${name} — ${PRODUCT}` : PRODUCT),
+  trash: (abs) => shell.trashItem(abs),
+});
 
 function createWindow(): BrowserWindow {
-  const win = new BrowserWindow({
+  const created = new BrowserWindow({
     width: 1280,
     height: 840,
     minWidth: 720,
     minHeight: 500,
-    title: 'Quest Notebook',
+    title: workspaces.session ? `${workspaces.session.name} — ${PRODUCT}` : PRODUCT,
     show: false,
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/index.cjs'),
@@ -16,19 +54,58 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
     },
   });
-  win.once('ready-to-show', () => win.show());
-  if (process.env.ELECTRON_RENDERER_URL) void win.loadURL(process.env.ELECTRON_RENDERER_URL);
-  else void win.loadFile(join(import.meta.dirname, '../renderer/index.html'));
-  return win;
+  created.once('ready-to-show', () => created.show());
+  // The page's own <title> would replace the workspace name.
+  created.on('page-title-updated', (e) => e.preventDefault());
+
+  // Web links open in the browser. The window itself never leaves the app.
+  created.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  created.webContents.on('will-navigate', (e, url) => {
+    const own = process.env.ELECTRON_RENDERER_URL ? url.startsWith(process.env.ELECTRON_RENDERER_URL) : url.startsWith('file://');
+    if (!own) {
+      e.preventDefault();
+      if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    }
+  });
+
+  // Closing waits for the last edits to be saved.
+  let saved = false;
+  created.on('close', (e) => {
+    if (saved) return;
+    e.preventDefault();
+    void flushWindow().finally(() => {
+      saved = true;
+      created.destroy();
+      if (quitting) app.quit();
+    });
+  });
+
+  if (process.env.ELECTRON_RENDERER_URL) void created.loadURL(process.env.ELECTRON_RENDERER_URL);
+  else void created.loadFile(join(import.meta.dirname, '../renderer/index.html'));
+  return created;
 }
 
-void app.whenReady().then(() => {
-  createWindow();
+void app.whenReady().then(async () => {
+  app.setName(PRODUCT);
+  registerIpc(workspaces, getWindow);
+  Menu.setApplicationMenu(buildMenu((cmd) => send('app:menu', cmd)));
+  await workspaces.openLast();
+  win = createWindow();
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (!getWindow()) win = createWindow();
   });
 });
 
+app.on('before-quit', () => {
+  quitting = true;
+});
+
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  if (process.platform !== 'darwin' || quitting) {
+    workspaces.close();
+    app.quit();
+  }
 });
