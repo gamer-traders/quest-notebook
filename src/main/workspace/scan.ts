@@ -91,6 +91,8 @@ interface Walk {
   pages: PageRecord[];
   index: ScanIndex;
   seenIds: Set<string>;
+  /** Where each id was last time: a page copied since keeps the original's id in its file, and gives way. */
+  prev?: ScanIndex;
 }
 
 async function remember(walk: Walk, id: string, rel: string, text: string, error?: string) {
@@ -116,7 +118,10 @@ async function readPage(walk: Walk, rel: string, spaceId: string, parentId: stri
 
   let file = parsed as Record<string, unknown>;
   let id = typeof file.id === 'string' && file.id.trim() ? file.id : '';
-  if (!id || walk.seenIds.has(id)) {
+  // Of two files with one id, the one where that id was before keeps it, if it's still there.
+  const owner = id ? walk.prev?.pages.get(id)?.path : undefined;
+  const ownerElsewhere = owner !== undefined && owner !== rel && (await stat(insideRoot(walk.root, owner)).then(() => true, () => false));
+  if (!id || walk.seenIds.has(id) || ownerElsewhere) {
     id = newId();
     const { id: _replaced, ...rest } = file;
     file = { id, ...rest };
@@ -179,7 +184,7 @@ export async function scanWorkspace(root: string, prev?: ScanIndex): Promise<Sca
     return { id, name };
   });
 
-  const walk: Walk = { root, pages: [], index, seenIds: new Set() };
+  const walk: Walk = { root, pages: [], index, seenIds: new Set(), prev };
   for (const space of spaces) await walkFolder(walk, space.name, space.id, null);
 
   const journal = config.journalSpace === null ? undefined : spaces.find((s) => s.name === config.journalSpace);

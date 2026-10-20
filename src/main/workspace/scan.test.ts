@@ -141,3 +141,14 @@ test('a sub-page folder named in a different case still belongs to its page, whi
   expect(snapshot.pages.map((p) => p.id).sort()).toEqual(['n', 's']);
   expect(snapshot.pages.find((p) => p.id === 's')!.parentId).toBe('n');
 });
+
+test('a copy of a page made while the app watches gets a new id, and the original keeps its own', async () => {
+  const root = await tmpWorkspace({ 'Markets/A.json': page('orig', 'A') });
+  const first = await scanWorkspace(root);
+  await writeFile(join(root, 'Markets/A copy.json'), page('orig', 'A'));
+  const { snapshot } = await scanWorkspace(root, first.index);
+  expect(snapshot.pages.find((p) => p.path === 'Markets/A.json')!.id).toBe('orig');
+  const copy = snapshot.pages.find((p) => p.path === 'Markets/A copy.json')!;
+  expect(copy.id).not.toBe('orig');
+  expect(JSON.parse(await read(root, 'Markets/A copy.json')).id).toBe(copy.id);
+});
