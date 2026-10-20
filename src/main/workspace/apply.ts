@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, rename, rmdir, stat } from 'node:fs/promises';
 import { formatJson } from '@shared/formatJson';
 import type { FlushBatch, FlushResult, PageSave } from '@shared/ipc';
-import { safeName, uniqueName } from '@shared/names';
+import { nameKey, safeName, uniqueName } from '@shared/names';
 import { insideRoot, writeFileAtomic } from './paths';
 import { CONFIG_PATH, isIgnoredName, readConfig, type ScanIndex } from './scan';
 
@@ -13,6 +13,14 @@ export interface ApplyDeps {
 
 const JSON_EXT = '.json';
 const folderOfPage = (path: string) => path.slice(0, -JSON_EXT.length);
+/** The page's sub-page folder as it is on disk, which may differ in case from its file's name. */
+async function folderOnDisk(root: string, path: string): Promise<string | null> {
+  const want = folderOfPage(path);
+  const dir = parentDir(want);
+  const entries = await readdir(insideRoot(root, dir), { withFileTypes: true }).catch(() => []);
+  const hit = entries.find((e) => e.isDirectory() && nameKey(e.name) === nameKey(want.slice(dir.length + 1)));
+  return hit ? `${dir}/${hit.name}` : null;
+}
 const parentDir = (path: string) => path.slice(0, path.lastIndexOf('/'));
 const baseOf = (path: string) => folderOfPage(path.slice(path.lastIndexOf('/') + 1));
 
@@ -31,7 +39,7 @@ export async function applyFlush(root: string, index: ScanIndex, batch: FlushBat
   /** Renames, going through a temporary name when only the case changes, which a case-insensitive disk would skip. */
   const move = async (from: string, to: string) => {
     if (from === to) return;
-    if (from.toLowerCase() === to.toLowerCase()) {
+    if (nameKey(from) === nameKey(to)) {
       const tmp = `${from}.${Date.now()}.tmp`;
       await rename(abs(from), abs(tmp));
       await rename(abs(tmp), abs(to));
@@ -95,7 +103,7 @@ export async function applyFlush(root: string, index: ScanIndex, batch: FlushBat
     const entry = index.pages.get(id);
     if (!entry) continue;
     try {
-      const folder = folderOfPage(entry.path);
+      const folder = (await folderOnDisk(root, entry.path)) ?? folderOfPage(entry.path);
       if (await exists(entry.path)) await deps.trash(abs(entry.path));
       if (await exists(folder)) await deps.trash(abs(folder));
       index.pages.delete(id);
@@ -125,11 +133,11 @@ export async function applyFlush(root: string, index: ScanIndex, batch: FlushBat
       if (save.parentId) {
         const parent = index.pages.get(save.parentId);
         if (!parent) throw new Error(`The page “${save.title}” sits under a page that isn't on disk`);
-        dir = folderOfPage(parent.path);
+        dir = (await folderOnDisk(root, parent.path)) ?? folderOfPage(parent.path);
       }
 
       const own = entry && parentDir(entry.path) === dir ? baseOf(entry.path) : null;
-      const siblings = (await exists(dir)) ? (await readdir(abs(dir))).filter((n) => n.endsWith(JSON_EXT) && !isIgnoredName(n)).map((n) => n.slice(0, -JSON_EXT.length)) : [];
+      const siblings = (await exists(dir)) ? (await readdir(abs(dir))).filter((n) => n.toLowerCase().endsWith(JSON_EXT) && !isIgnoredName(n)).map((n) => n.slice(0, -JSON_EXT.length)) : [];
       const name = uniqueName(safeName(save.title), siblings.filter((n) => n !== own));
       const target = `${dir}/${name}${JSON_EXT}`;
 
@@ -137,7 +145,7 @@ export async function applyFlush(root: string, index: ScanIndex, batch: FlushBat
         await mkdir(abs(dir), { recursive: true });
       } else if (entry.path !== target) {
         await mkdir(abs(dir), { recursive: true });
-        const fromFolder = folderOfPage(entry.path);
+        const fromFolder = (await folderOnDisk(root, entry.path)) ?? folderOfPage(entry.path);
         await move(entry.path, target);
         if (await exists(fromFolder)) {
           await move(fromFolder, folderOfPage(target));

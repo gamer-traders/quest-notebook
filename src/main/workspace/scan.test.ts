@@ -132,3 +132,12 @@ test('JSON that is not a page is reported and never written to', async () => {
   expect(await read(root, 'Markets/package.json')).toBe(pkg);
   expect(await read(root, 'Markets/list.json')).toBe('[1, 2]');
 });
+
+test('a sub-page folder named in a different case still belongs to its page, which is never written over', async () => {
+  const notes = page('n', 'Notes', { blocks: [{ type: 'paragraph', text: 'keep me' }] });
+  const root = await tmpWorkspace({ 'Markets/Notes.json': notes, 'Markets/notes/Sub.json': page('s', 'Sub') });
+  const { snapshot } = await scanWorkspace(root);
+  expect(await read(root, 'Markets/Notes.json')).toBe(notes);
+  expect(snapshot.pages.map((p) => p.id).sort()).toEqual(['n', 's']);
+  expect(snapshot.pages.find((p) => p.id === 's')!.parentId).toBe('n');
+});

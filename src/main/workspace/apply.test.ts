@@ -214,3 +214,11 @@ test('two pages swapping titles both survive', async () => {
   const titles = await Promise.all(files.map(async (f) => JSON.parse(await read(`Markets/${f}`))));
   expect(titles.map((t) => [t.id, t.title]).sort()).toEqual([['a', 'B'], ['b', 'A']]);
 });
+
+test('a sibling whose extension is in capitals, or whose accents are decomposed, keeps its file', async () => {
+  await setup({ 'Markets/Notes.JSON': page('x', 'Notes'), 'Markets/Cafe\u0301.json': page('c', 'Caf\u00e9') });
+  const result = await apply({ saves: [save('n', 'Notes'), save('k', 'Caf\u00e9')] });
+  expect(result.paths).toEqual({ n: 'Markets/Notes 2.json', k: 'Markets/Caf\u00e9 2.json' });
+  expect(JSON.parse(await read('Markets/Notes.JSON')).id).toBe('x');
+  expect(JSON.parse(await read('Markets/Cafe\u0301.json')).id).toBe('c');
+});

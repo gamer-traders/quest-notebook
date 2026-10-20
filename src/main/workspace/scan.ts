@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { formatJson } from '@shared/formatJson';
+import { nameKey } from '@shared/names';
 import { EMPTY_UI, type PageRecord, type SpaceRecord, type UiState, type WorkspaceConfig, type WorkspaceSnapshot } from '@shared/ipc';
 import { insideRoot, writeFileAtomic } from './paths';
 
@@ -143,10 +144,10 @@ async function walkFolder(walk: Walk, dir: string, spaceId: string, parentId: st
   for (const name of fileNames) records.push(await readPage(walk, `${dir}/${name}`, spaceId, parentId));
 
   // A folder with no page file of its own becomes a page, so the pages in it have somewhere to sit.
-  const pageNames = new Set(fileNames.map((name) => name.slice(0, -'.json'.length)));
+  const pageNames = new Set(fileNames.map((name) => nameKey(name.slice(0, -'.json'.length))));
   let position = highestPosition(records);
   for (const folder of folderNames) {
-    if (pageNames.has(folder)) continue;
+    if (pageNames.has(nameKey(folder))) continue;
     const id = newId();
     const now = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
     const rel = `${dir}/${folder}.json`;
@@ -156,13 +157,14 @@ async function walkFolder(walk: Walk, dir: string, spaceId: string, parentId: st
     walk.seenIds.add(id);
     const mtimeMs = await remember(walk, id, rel, text);
     records.push({ id, spaceId, parentId, path: rel, mtimeMs, file });
-    pageNames.add(folder);
+    pageNames.add(nameKey(folder));
   }
 
   walk.pages.push(...records);
   for (const record of records) {
-    const folder = record.path.slice(dir.length + 1, -'.json'.length);
-    if (folderNames.includes(folder)) await walkFolder(walk, `${dir}/${folder}`, spaceId, record.id);
+    const base = nameKey(record.path.slice(dir.length + 1, -'.json'.length));
+    const folder = folderNames.find((name) => nameKey(name) === base);
+    if (folder !== undefined) await walkFolder(walk, `${dir}/${folder}`, spaceId, record.id);
   }
 }
 
