@@ -63,6 +63,7 @@ export function applyDisk(delta: DiskDelta): void {
  * workspace gets the sample pages when asked, opened on the lesson with its sub-page showing.
  */
 export function openResult(result: OpenResult | null, opts: { samples?: boolean } = {}): void {
+  if (result && !result.ok && result.cancelled) return;
   if (!result?.ok) {
     useWorkspaceUi.setState({ error: result ? result.error : null, screen: 'welcome' });
     return;

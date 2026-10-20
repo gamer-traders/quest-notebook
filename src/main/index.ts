@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { join } from 'node:path';
-import { app, BrowserWindow, ipcMain, Menu, shell } from 'electron';
+import { basename, join } from 'node:path';
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
 import { registerIpc } from './ipc';
 import { buildMenu } from './menu';
 import { Workspaces } from './workspaces';
@@ -37,6 +37,20 @@ const workspaces = new Workspaces(join(app.getPath('userData'), 'workspaces.json
   lost: (message) => send('workspace:lost', message),
   opened: (name) => getWindow()?.setTitle(name ? `${name} — ${PRODUCT}` : PRODUCT),
   trash: (abs) => shell.trashItem(abs),
+  confirmAdopt: async (root) => {
+    const options = {
+      type: 'question' as const,
+      buttons: ['Open as Workspace', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      message: `Open “${basename(root)}” as a workspace?`,
+      detail:
+        'This folder already has files in it. Quest Notebook will show each folder in it as a space and each page file as a page, and will add a page file for any folder that has none. Other files are left alone.',
+    };
+    const target = getWindow();
+    const { response } = target ? await dialog.showMessageBox(target, options) : await dialog.showMessageBox(options);
+    return response === 0;
+  },
 });
 
 function createWindow(): BrowserWindow {

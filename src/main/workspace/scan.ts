@@ -40,6 +40,9 @@ export function newId(): string {
 export const isIgnoredName = (name: string) => name.startsWith('.') || name.endsWith('.tmp');
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** A page file: a JSON object with a list of blocks. */
+export const isPageShaped = (v: unknown): v is Record<string, unknown> & { blocks: unknown[] } => isRecord(v) && Array.isArray(v.blocks);
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
 
 export async function readConfig(root: string): Promise<WorkspaceConfig> {
@@ -101,7 +104,8 @@ async function readPage(walk: Walk, rel: string, spaceId: string, parentId: stri
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
-    if (!isRecord(parsed)) throw new Error('A page file must hold a JSON object.');
+    // Only page-shaped files are ever written to: anything else is shown with why, and left exactly as it is.
+    if (!isPageShaped(parsed)) throw new Error('This file is not a page: a page is a JSON object with a "blocks" list.');
   } catch (error) {
     const id = `bad:${rel}`;
     const message = error instanceof Error ? error.message : String(error);

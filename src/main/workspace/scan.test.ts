@@ -122,3 +122,13 @@ test('paths outside the workspace are refused', () => {
   expect(() => insideRoot('/w', '/etc/passwd')).toThrow('Path outside workspace');
   expect(insideRoot('/w', 'Markets/A.json')).toBe('/w/Markets/A.json');
 });
+
+test('JSON that is not a page is reported and never written to', async () => {
+  const pkg = '{\n  "name": "web",\n  "big": 12345678901234567890,\n  "version": 1.10\n}\n';
+  const root = await tmpWorkspace({ 'Markets/package.json': pkg, 'Markets/list.json': '[1, 2]' });
+  const { snapshot } = await scanWorkspace(root);
+  expect(snapshot.pages.map((p) => [p.path, !!p.error])).toEqual([['Markets/list.json', true], ['Markets/package.json', true]]);
+  expect(snapshot.pages[1].error).toMatch(/not a page/);
+  expect(await read(root, 'Markets/package.json')).toBe(pkg);
+  expect(await read(root, 'Markets/list.json')).toBe('[1, 2]');
+});

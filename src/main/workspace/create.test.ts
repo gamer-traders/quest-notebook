@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { adoptFolder, createWorkspace } from './create';
+import { AdoptDeclined, adoptFolder, createWorkspace } from './create';
 
 const tmp = () => mkdtemp(join(tmpdir(), 'quest-create-'));
 
@@ -51,4 +51,24 @@ test('a folder that is gone is not made again', async () => {
   await rm(root, { recursive: true });
   await expect(adoptFolder(root)).rejects.toThrow(`Couldn't find ${root}`);
   await expect(readdir(root)).rejects.toThrow();
+});
+
+test('a folder with files in it becomes a workspace only once the person agrees', async () => {
+  const root = await tmp();
+  await writeFile(join(root, 'notes.txt'), 'x');
+  let asked = 0;
+  await expect(adoptFolder(root, async () => (asked++, false))).rejects.toThrow(AdoptDeclined);
+  expect(asked).toBe(1);
+  expect((await readdir(root)).sort()).toEqual(['notes.txt']);
+  expect(await adoptFolder(root, async () => true)).toEqual({ isNew: true });
+});
+
+test('an empty folder or an existing workspace is opened without asking', async () => {
+  const root = await tmp();
+  const never = async () => {
+    throw new Error('asked');
+  };
+  expect(await adoptFolder(root, never)).toEqual({ isNew: true });
+  await writeFile(join(root, 'x.txt'), 'x');
+  expect(await adoptFolder(root, never)).toEqual({ isNew: false });
 });

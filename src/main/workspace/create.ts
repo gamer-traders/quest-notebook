@@ -32,11 +32,24 @@ export async function createWorkspace(parentDir: string, name: string): Promise<
   return root;
 }
 
-/** Makes an existing folder a workspace, if it isn't one yet. A folder that's gone is never made again. */
-export async function adoptFolder(root: string): Promise<{ isNew: boolean }> {
+/** The person chose not to make a folder with files in it a workspace. */
+export class AdoptDeclined extends Error {
+  constructor(root: string) {
+    super(`${root} was not opened`);
+  }
+}
+
+/**
+ * Makes an existing folder a workspace, if it isn't one yet. A folder that already has files in it is only
+ * made one if `confirm` agrees: its folders become spaces, and folders without a page file get one. A folder
+ * that's gone is never made again.
+ */
+export async function adoptFolder(root: string, confirm?: (root: string) => Promise<boolean>): Promise<{ isNew: boolean }> {
   const info = await stat(root).catch(() => null);
   if (!info?.isDirectory()) throw new Error(`Couldn't find ${root}`);
   if (await exists(join(root, CONFIG_PATH))) return { isNew: false };
+  const hasFiles = (await readdir(root)).some((name) => !name.startsWith('.'));
+  if (hasFiles && confirm && !(await confirm(root))) throw new AdoptDeclined(root);
   await writeConfig(root, { format: 1, name: basename(root), spaces: [], journalSpace: null });
   await writeReadme(root);
   return { isNew: true };

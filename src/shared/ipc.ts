@@ -112,7 +112,8 @@ export interface RecentWorkspace {
   lastOpened: string;
 }
 
-export type OpenResult = { ok: true; snapshot: WorkspaceSnapshot } | { ok: false; error: string; path?: string };
+/** `cancelled`: the person chose not to open it, so there's nothing to show. */
+export type OpenResult = { ok: true; snapshot: WorkspaceSnapshot } | { ok: false; error: string; path?: string; cancelled?: boolean };
 
 export type MenuCommand = 'new-workspace' | 'open-workspace' | 'reveal-workspace';
 

@@ -1,6 +1,6 @@
 import type { DiskDelta, OpenResult } from '@shared/ipc';
 import { forgetWorkspace, readRegistry, touchWorkspace } from './registry';
-import { adoptFolder, createWorkspace } from './workspace/create';
+import { AdoptDeclined, adoptFolder, createWorkspace } from './workspace/create';
 import { WorkspaceSession } from './workspace/session';
 
 export interface WorkspaceHost {
@@ -11,6 +11,8 @@ export interface WorkspaceHost {
   /** The open workspace changed: the window title follows. */
   opened(name: string | null): void;
   trash(abs: string): Promise<void>;
+  /** Asks before a folder that already has files in it becomes a workspace. */
+  confirmAdopt(root: string): Promise<boolean>;
 }
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -30,7 +32,7 @@ export class Workspaces {
   async openLast(): Promise<void> {
     const { last } = await readRegistry(this.registryFile);
     if (!last) return;
-    const result = await this.open(last, false);
+    const result = await this.open(last, false, false);
     if (!result.ok) this.launchError = { error: result.error, path: last };
   }
 
@@ -46,11 +48,12 @@ export class Workspaces {
   }
 
   /** Opens a folder as the workspace, saving and closing the one open now first. */
-  async open(root: string, flushFirst = true): Promise<OpenResult> {
+  async open(root: string, flushFirst = true, ask = true): Promise<OpenResult> {
     try {
-      const { isNew } = await adoptFolder(root);
+      const { isNew } = await adoptFolder(root, ask ? (r) => this.host.confirmAdopt(r) : undefined);
       return await this.switchTo(root, isNew, flushFirst);
     } catch (error) {
+      if (error instanceof AdoptDeclined) return { ok: false, error: '', path: root, cancelled: true };
       return { ok: false, error: message(error), path: root };
     }
   }
