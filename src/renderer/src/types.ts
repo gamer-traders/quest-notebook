@@ -116,4 +116,8 @@ export interface Notebook {
   updatedAt: number;
   blocks: PageBlock[];
   items: Record<string, ItemData>;
+  /** Where the page's file is, relative to the workspace folder. */
+  path?: string;
+  /** Why the page's file couldn't be read. Such a page is shown, never saved. */
+  loadError?: string;
 }
