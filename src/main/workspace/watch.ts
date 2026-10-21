@@ -128,7 +128,8 @@ export function watchWorkspace(root: string, onChange: () => void, debounceMs = 
   try {
     watcher = watch(root, { recursive: true }, (_event, filename) => {
       const name = filename?.toString().split('\\').join('/');
-      if (name === STATE_PATH || name?.endsWith('.tmp')) return;
+      // Writing into .quest/chats makes the OS report .quest and its folder as changed too.
+      if (name === STATE_PATH || name?.endsWith('.tmp') || name === '.quest' || name === '.quest/chats' || name?.startsWith('.quest/chats/')) return;
       schedule();
     });
     watcher.on('error', (error) => console.error('Watching the workspace failed:', error));

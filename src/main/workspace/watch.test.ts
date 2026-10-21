@@ -113,6 +113,25 @@ test('the watcher calls back soon after a file changes', async () => {
   }
 });
 
+test('writes in .quest/chats are quiet, page edits are not', async () => {
+  const { root } = await workspace({ 'Markets/': '', '.quest/chats/': '' });
+  let calls = 0;
+  const stop = watchWorkspace(root, () => calls++, 50);
+  try {
+    // The OS may still be reporting the folders made a moment ago.
+    await new Promise((r) => setTimeout(r, 400));
+    calls = 0;
+    await writeFile(join(root, '.quest/chats/abcd1234.json'), '{}');
+    await new Promise((r) => setTimeout(r, 400));
+    expect(calls).toBe(0);
+    await writeFile(join(root, 'Markets/x.json'), page('x', 'X'));
+    for (let i = 0; i < 40 && calls === 0; i++) await new Promise((r) => setTimeout(r, 50));
+    expect(calls).toBeGreaterThan(0);
+  } finally {
+    stop();
+  }
+});
+
 test('a drawing file edited outside changes its page', async () => {
   const { root, known } = await workspace({ 'Markets/A.json': page('a', 'A'), 'Markets/A/drawing-d1.svg': '<svg>1</svg>' });
   await writeFile(join(root, 'Markets/A/drawing-d1.svg'), '<svg>2</svg>');

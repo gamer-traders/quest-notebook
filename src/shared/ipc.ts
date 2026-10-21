@@ -194,3 +194,35 @@ export interface UndoResult {
   undone: string[];
   conflicts: string[];
 }
+
+/** What a chat message pointed Claude at: a whole page, or a passage of it. */
+export type ChatReference = { kind: 'page'; pageId: string; title: string } | { kind: 'selection'; pageId: string; title: string; text: string };
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  created: string;
+  references?: ChatReference[];
+  actions?: ChatAction[];
+  changes?: FileChange[];
+  /** Paths of the changes that were undone. */
+  undone?: string[];
+  error?: string;
+}
+
+/** A saved conversation, kept in .quest/chats/<id>.json. `sessionId` is the CLI session to resume. */
+export interface Chat {
+  id: string;
+  title: string;
+  sessionId: string | null;
+  created: string;
+  updated: string;
+  messages: ChatMessage[];
+}
+
+export interface ChatSummary {
+  id: string;
+  title: string;
+  updated: string;
+}
