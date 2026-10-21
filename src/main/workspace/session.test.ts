@@ -1,5 +1,5 @@
 import { access, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
-import type { DiskDelta } from '@shared/ipc';
+import type { DiskDelta, FileChange } from '@shared/ipc';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -84,4 +84,57 @@ test('saving into a workspace whose folder is gone re-creates nothing and report
   } finally {
     session.close();
   }
+});
+
+test('an outside edit reports its file changes, a flush does not, and settle waits for the report', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'quest-changes-'));
+  await mkdir(join(root, 'Markets'));
+  const old = '{"id":"a","title":"A","position":0,"blocks":[]}\n';
+  await writeFile(join(root, 'Markets/A.json'), old);
+  const reported: FileChange[][] = [];
+  const session = await WorkspaceSession.open(root, false, { change: () => {}, lost: () => {}, fileChanges: (c) => reported.push(c) }, async () => {}, 60_000);
+  try {
+    const markets = session.snapshot.spaces[0];
+    const next = '{"id":"a","title":"A","position":0,"blocks":[{"type":"paragraph","text":"hi"}]}\n';
+    const flushed = await session.flush({ spaces: [markets], createdSpaces: [], deletedSpaces: [], journalSpaceId: null, deletes: [], saves: [{ id: 'a', spaceId: markets.id, parentId: null, title: 'A', json: next, sidecars: {} }] });
+    expect(flushed.ok).toBe(true);
+    await session.settle();
+    expect(reported).toEqual([]);
+
+    const outside = '{"id":"a","title":"A","position":0,"blocks":[{"type":"paragraph","text":"claude"}]}\n';
+    await writeFile(join(root, 'Markets/A.json'), outside);
+    await session.settle();
+    expect(reported).toEqual([[{ path: 'Markets/A.json', pageId: 'a', kind: 'edited', drawing: false, before: next, after: outside }]]);
+  } finally {
+    session.close();
+  }
+});
+
+test('pageIdForPath and pageInfo, with the file name as the title when there is none', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'quest-info-'));
+  await mkdir(join(root, 'Markets'));
+  await writeFile(join(root, 'Markets/A.json'), '{"id":"a","title":"Alpha","position":0,"blocks":[]}\n');
+  await writeFile(join(root, 'Markets/Untitled.json'), '{"id":"u","position":1,"blocks":[]}\n');
+  await writeFile(join(root, 'Markets/Broken.json'), '{ nope');
+  const session = await WorkspaceSession.open(root, false, { change: () => {}, lost: () => {} }, async () => {}, 60_000);
+  try {
+    expect(session.pageIdForPath('Markets/A.json')).toBe('a');
+    expect(session.pageIdForPath('Markets/Nope.json')).toBeUndefined();
+    expect(session.pageInfo('a')).toEqual({ path: 'Markets/A.json', title: 'Alpha' });
+    expect(session.pageInfo('u')).toEqual({ path: 'Markets/Untitled.json', title: 'Untitled' });
+    const broken = session.pageIdForPath('Markets/Broken.json')!;
+    expect(session.pageInfo(broken)).toEqual({ path: 'Markets/Broken.json', title: 'Broken' });
+    expect(session.pageInfo('zzz')).toBeUndefined();
+  } finally {
+    session.close();
+  }
+});
+
+test('exclusive runs work in the queue, and refuses once the session is closed', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'quest-excl-'));
+  await mkdir(join(root, 'Markets'));
+  const session = await WorkspaceSession.open(root, false, { change: () => {}, lost: () => {} }, async () => {}, 60_000);
+  expect(await session.exclusive(async () => 42)).toBe(42);
+  session.close();
+  await expect(session.exclusive(async () => 1)).rejects.toThrow(/closed/);
 });

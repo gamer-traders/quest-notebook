@@ -1,5 +1,5 @@
 import { watch, type FSWatcher } from 'node:fs';
-import type { DiskDelta, FlushBatch, SpaceRecord } from '@shared/ipc';
+import type { DiskDelta, FileChange, FlushBatch, SpaceRecord } from '@shared/ipc';
 import { safeName } from '@shared/names';
 import type { PageEntry, ScanIndex, ScanResult } from './scan';
 import { spaceOrder } from './apply';
@@ -76,6 +76,39 @@ export function diffScans(prev: Known, next: ScanResult): Omit<DiskDelta, 'seq'>
   const spacesChanged = !sameSpaces(prev.spaces, next.snapshot.spaces) || prev.journalSpaceId !== next.snapshot.journalSpaceId;
   if (!pages.length && !removed.length && !spacesChanged) return null;
   return { spaces: next.snapshot.spaces, journalSpaceId: next.snapshot.journalSpaceId, pages, removed };
+}
+
+/** Every page file and drawing file in an index, by path: its text, and its page's id. */
+function filesByPath(index: ScanIndex): Map<string, { text: string; pageId: string; drawing: boolean }> {
+  const files = new Map<string, { text: string; pageId: string; drawing: boolean }>();
+  for (const [pageId, entry] of index.pages) {
+    files.set(entry.path, { text: entry.text, pageId, drawing: false });
+    const folder = entry.path.replace(/\.json$/i, '');
+    for (const [name, sidecar] of Object.entries(entry.sidecars ?? {})) files.set(`${folder}/${name}`, { text: sidecar.text, pageId, drawing: true });
+  }
+  return files;
+}
+
+/**
+ * The page and drawing files whose text differs, by path, between what main knew and a fresh scan. A file
+ * that was removed isn't listed. Paths are compared, not ids: a page that stops parsing changes its id.
+ */
+export function fileChanges(prev: Known, next: ScanResult): FileChange[] {
+  const before = filesByPath(prev.index);
+  const changes: FileChange[] = [];
+  for (const [path, now] of filesByPath(next.index)) {
+    const was = before.get(path);
+    if (was && was.text === now.text) continue;
+    changes.push({
+      path,
+      ...(now.pageId.startsWith('bad:') ? {} : { pageId: now.pageId }),
+      kind: was ? 'edited' : 'created',
+      drawing: now.drawing,
+      before: was ? was.text : null,
+      after: now.text,
+    });
+  }
+  return changes;
 }
 
 /**

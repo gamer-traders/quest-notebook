@@ -1,17 +1,19 @@
 import { mkdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { formatJson } from '@shared/formatJson';
-import type { DiskDelta, FlushBatch, FlushResult, UiState, WorkspaceSnapshot } from '@shared/ipc';
+import type { DiskDelta, FileChange, FlushBatch, FlushResult, UiState, WorkspaceSnapshot } from '@shared/ipc';
 import { applyFlush } from './apply';
 import { insideRoot, writeFileAtomic } from './paths';
 import { STATE_PATH, scanWorkspace } from './scan';
-import { diffScans, knownAfterFlush, knownFromScan, watchWorkspace, type Known } from './watch';
+import { diffScans, fileChanges, knownAfterFlush, knownFromScan, watchWorkspace, type Known } from './watch';
 
 export interface SessionEvents {
   /** Something changed on disk outside the app. */
   change(delta: DiskDelta): void;
   /** The workspace folder is gone. */
   lost(message: string): void;
+  /** The page and drawing files that changed on disk outside the app, by what they held before. */
+  fileChanges?(changes: FileChange[]): void;
 }
 
 /**
@@ -110,6 +112,31 @@ export class WorkspaceSession {
     });
   }
 
+  /** Reads the folder again now, in turn: afterwards every outside write made before the call has been seen and reported. */
+  settle(): Promise<void> {
+    return this.rescan();
+  }
+
+  /** Runs `work` in the queue, so no scan reads the folder half way through it. */
+  exclusive<T>(work: () => Promise<T>): Promise<T> {
+    return this.turn(async () => {
+      if (this.closed) throw new Error('This workspace is closed');
+      return work();
+    });
+  }
+
+  pageIdForPath(path: string): string | undefined {
+    return this.snapshot.pages.find((p) => p.path === path)?.id;
+  }
+
+  pageInfo(id: string): { path: string; title: string } | undefined {
+    const record = this.snapshot.pages.find((p) => p.id === id);
+    if (!record) return undefined;
+    const title = (record.file as { title?: unknown } | undefined)?.title;
+    const name = record.path.slice(record.path.lastIndexOf('/') + 1).replace(/\.json$/i, '');
+    return { path: record.path, title: typeof title === 'string' && title.trim() ? title : name };
+  }
+
   private rescan(): Promise<void> {
     return this.turn(async () => {
       if (this.closed) return;
@@ -117,6 +144,7 @@ export class WorkspaceSession {
       try {
         const next = await scanWorkspace(this.root, this.known.index);
         const delta = diffScans(this.known, next);
+        const changes = fileChanges(this.known, next);
         this.known = knownFromScan(next);
         this.snapshot = { ...next.snapshot, isNew: false };
         if (delta) {
@@ -125,6 +153,7 @@ export class WorkspaceSession {
           for (const id of delta.removed) this.changedAt.set(id, seq);
           this.events.change({ ...delta, seq });
         }
+        if (changes.length) this.events.fileChanges?.(changes);
       } catch (error) {
         console.error('Reading the workspace after a change failed:', error);
       }

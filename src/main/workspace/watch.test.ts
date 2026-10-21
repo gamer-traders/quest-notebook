@@ -1,10 +1,10 @@
 import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { expect, test } from 'vitest';
+import { describe, expect, test } from 'vitest';
 import { scanWorkspace } from './scan';
 import { applyFlush } from './apply';
-import { diffScans, knownAfterFlush, knownFromScan, watchWorkspace, type Known } from './watch';
+import { diffScans, fileChanges, knownAfterFlush, knownFromScan, watchWorkspace, type Known } from './watch';
 
 const page = (id: string, title: string, blocks: unknown[] = []) => `${JSON.stringify({ id, title, position: 0, blocks })}\n`;
 
@@ -36,7 +36,7 @@ test('the app’s own writes are quiet', async () => {
     journalSpaceId: lessons,
     saves: [
       { id: 'a', spaceId: lessons, parentId: null, title: 'A moved', json: page('a', 'A moved'), sidecars: {} },
-      { id: 'n', spaceId: markets, parentId: null, title: 'New', json: page('n', 'New'), sidecars: {} },
+      { id: 'n', spaceId: markets, parentId: null, title: 'New', json: page('n', 'New'), sidecars: {} as Record<string, string> },
     ],
     deletes: [],
   };
@@ -127,4 +127,52 @@ test('the app’s own drawing writes are quiet', async () => {
   const batch = { spaces: known.spaces, createdSpaces: [], deletedSpaces: [], journalSpaceId: null, deletes: [], saves: [{ id: 'a', spaceId: markets, parentId: null, title: 'A', json: page('a', 'A'), sidecars: { 'drawing-d1.svg': '<svg>new</svg>' } }] };
   await applyFlush(root, known.index, batch, deps);
   expect(await rescan(root, knownAfterFlush(known, batch))).toBeNull();
+});
+
+describe('fileChanges', () => {
+  const changes = async (root: string, known: Known) => fileChanges(known, await scanWorkspace(root, known.index));
+
+  test('an outside edit lists the old and new text', async () => {
+    const old = page('a', 'A');
+    const { root, known } = await workspace({ 'Markets/A.json': old });
+    const text = page('a', 'A', [{ type: 'paragraph', text: 'x' }]);
+    await writeFile(join(root, 'Markets/A.json'), text);
+    expect(await changes(root, known)).toEqual([{ path: 'Markets/A.json', pageId: 'a', kind: 'edited', drawing: false, before: old, after: text }]);
+  });
+
+  test('a new page and a new drawing are created', async () => {
+    const { root, known } = await workspace({ 'Markets/A.json': page('a', 'A') });
+    await writeFile(join(root, 'Markets/B.json'), page('b', 'B'));
+    await mkdir(join(root, 'Markets/A'));
+    await writeFile(join(root, 'Markets/A/drawing-d.svg'), '<svg/>');
+    const list = await changes(root, known);
+    expect(list).toContainEqual({ path: 'Markets/B.json', pageId: 'b', kind: 'created', drawing: false, before: null, after: page('b', 'B') });
+    expect(list).toContainEqual({ path: 'Markets/A/drawing-d.svg', pageId: 'a', kind: 'created', drawing: true, before: null, after: '<svg/>' });
+    expect(list).toHaveLength(2);
+  });
+
+  test('invalid JSON over a page is an edit with the old text as before', async () => {
+    const old = page('a', 'A');
+    const { root, known } = await workspace({ 'Markets/A.json': old });
+    await writeFile(join(root, 'Markets/A.json'), '{ nope');
+    expect(await changes(root, known)).toEqual([{ path: 'Markets/A.json', kind: 'edited', drawing: false, before: old, after: '{ nope' }]);
+  });
+
+  test('the app’s own flush lists nothing', async () => {
+    const { root, known } = await workspace({ 'Markets/A.json': page('a', 'A'), 'Lessons/': '' });
+    const markets = known.spaces.find((s) => s.name === 'Markets')!.id;
+    const batch = {
+      spaces: known.spaces,
+      createdSpaces: [],
+      deletedSpaces: [],
+      journalSpaceId: null,
+      saves: [
+        { id: 'a', spaceId: markets, parentId: null, title: 'A', json: page('a', 'A', [{ type: 'paragraph', text: 'y' }]), sidecars: { 'drawing-q.svg': '<svg/>' } as Record<string, string> },
+        { id: 'n', spaceId: markets, parentId: null, title: 'New', json: page('n', 'New'), sidecars: {} as Record<string, string> },
+      ],
+      deletes: [],
+    };
+    await applyFlush(root, known.index, batch, deps);
+    expect(await changes(root, knownAfterFlush(known, batch))).toEqual([]);
+  });
 });

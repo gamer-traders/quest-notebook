@@ -174,3 +174,21 @@ export interface QuestApi {
     openExternal(url: string): Promise<void>;
   };
 }
+
+/** A page or drawing file that changed on disk, as Claude's turn left it. `before` is null for a file that is new. */
+export interface FileChange {
+  /** Relative to the workspace folder, with '/' between parts. */
+  path: string;
+  /** The page's id, or for a drawing its page's. Left out for a page file that can't be read. */
+  pageId?: string;
+  kind: 'edited' | 'created';
+  drawing: boolean;
+  before: string | null;
+  after: string | null;
+}
+
+/** What undoing a turn did: the files put back, and the files left alone because they changed since. */
+export interface UndoResult {
+  undone: string[];
+  conflicts: string[];
+}
