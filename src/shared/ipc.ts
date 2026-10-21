@@ -127,6 +127,25 @@ export type OpenResult = { ok: true; snapshot: WorkspaceSnapshot } | { ok: false
 
 export type MenuCommand = 'new-workspace' | 'open-workspace' | 'reveal-workspace';
 
+/** One thing Claude did in a turn. `path` is relative to the workspace, with `/` separators. */
+export interface ChatAction {
+  /** The tool_use id. */
+  id?: string;
+  verb: 'read' | 'edited' | 'created' | 'searched' | 'other';
+  path?: string;
+  detail?: string;
+  /** Set later, when the CLI reports the call as refused. */
+  refused?: boolean;
+}
+
+/** What the setup check found about the claude CLI. */
+export interface ClaudeStatus {
+  state: 'ready' | 'missing' | 'logged-out' | 'error';
+  path?: string;
+  version?: string;
+  message?: string;
+}
+
 /** `window.quest`: everything the window can ask of the main process. */
 export interface QuestApi {
   workspaces: {
