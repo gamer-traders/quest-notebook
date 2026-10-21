@@ -5,9 +5,7 @@ import { DRAWING_WIDTH, SIZES, type PenTool, type Stroke } from './model';
 import { outlineOf, strokePath, strokesHit } from './strokes';
 import { RULE_GAP } from './svg';
 import type { PenSettings } from './penSettings';
-
-/** The pen's eraser end: Wacom reports it as button 5, held down as buttons bit 32. */
-const isEraserEnd = (e: PointerEvent | ReactPointerEvent) => e.pointerType === 'pen' && (e.button === 5 || (e.buttons & 32) !== 0);
+import { isEraserEnd, startsStroke } from './input';
 
 /** A pen's pressure, or none for a mouse or a finger. Some pens report 0 for their first touch. */
 const pressureOf = (e: PointerEvent) => (e.pointerType === 'pen' ? (e.pressure > 0 ? e.pressure : 0.5) : 0.5);
@@ -76,8 +74,8 @@ export function DrawingCanvas({ drawing, pen, onStroke, onErase, patternId }: Pr
   };
 
   const onPointerDown = (e: ReactPointerEvent<SVGSVGElement>) => {
+    if (!startsStroke(e, live.current !== null)) return;
     const eraserEnd = isEraserEnd(e);
-    if (e.button !== 0 && !eraserEnd) return;
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
     (e.currentTarget.parentElement as HTMLElement | null)?.focus({ preventScroll: true });
@@ -133,6 +131,7 @@ export function DrawingCanvas({ drawing, pen, onStroke, onErase, patternId }: Pr
       onPointerMove={onPointerMove}
       onPointerUp={finish}
       onPointerCancel={finish}
+      onLostPointerCapture={finish}
       onPointerLeave={() => !live.current && setEraserAt(null)}
     >
       {drawing.background !== 'blank' && (
