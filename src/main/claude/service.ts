@@ -389,12 +389,17 @@ export class ClaudeService {
   /**
    * The reply as the turn left it: refusals marked, a Write on a file that was there counted as an edit, and only the
    * changes to files Claude itself wrote. A file another app changed during the turn isn't Claude's, so it's never undone.
+   * One more is Claude's doing: the page the app made for a new folder Claude put a page in, so undo leaves no empty page.
    */
   private reply(turn: Turn, error: string | undefined): ChatMessage {
     const refused = new Set(turn.done?.refused ?? []);
     for (const action of turn.actions) if (action.id !== undefined && refused.has(action.id)) action.refused = true;
     const written = new Set(turn.actions.flatMap((a) => ((a.verb === 'edited' || a.verb === 'created') && !a.refused && a.path !== undefined ? [a.path] : [])));
-    const changes = turn.changes.list().filter((c) => written.has(c.path));
+    const all = turn.changes.list();
+    const madeByClaude = all.filter((c) => written.has(c.path) && c.kind === 'created').map((c) => c.path);
+    const isFolderPage = (c: FileChange) =>
+      c.kind === 'created' && !c.drawing && /\.json$/i.test(c.path) && madeByClaude.some((path) => path.startsWith(`${c.path.slice(0, -'.json'.length)}/`));
+    const changes = all.filter((c) => written.has(c.path) || isFolderPage(c));
     const kinds = new Map(changes.map((c) => [c.path, c.kind]));
     for (const action of turn.actions) {
       if (action.verb === 'created' && action.path !== undefined && kinds.get(action.path) === 'edited') action.verb = 'edited';

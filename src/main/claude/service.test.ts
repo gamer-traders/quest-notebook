@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
@@ -725,6 +725,32 @@ describe("only Claude's own changes", () => {
     const message = await doneOf(s, messageId);
     expect(message.changes?.map((c) => c.path)).toEqual(['Markets/A.json', 'Markets/A/drawing-x1.svg']);
     expect(await readFile(join(s.root, 'Markets/B.json'), 'utf8')).toMatch(/Written by another app/);
+  });
+
+  test('a sub-page in a new folder brings the page the app made for that folder, and undo leaves nothing behind', async () => {
+    const s = await setup();
+    const { chatId, messageId } = await sendOk(s, 'Make a sub page');
+    const message = await doneOf(s, messageId);
+    expect(message.changes?.map(({ path, kind, drawing }) => ({ path, kind, drawing }))).toEqual([
+      { path: 'Markets/Folder.json', kind: 'created', drawing: false },
+      { path: 'Markets/Folder/X.json', kind: 'created', drawing: false },
+    ]);
+    // The app made Markets/Folder.json itself, so Claude has no action for it.
+    expect(message.actions?.map(withoutId)).toEqual([{ verb: 'created', path: 'Markets/Folder/X.json' }]);
+
+    expect(await s.service.undo(chatId, messageId, null, false)).toEqual({ undone: ['Markets/Folder.json', 'Markets/Folder/X.json'], conflicts: [] });
+    expect((await readdir(join(s.root, 'Markets'))).sort()).toEqual(['A.json', 'B.json']);
+    // The next look at the folder finds nothing to put back.
+    await s.session.settle();
+    expect((await readdir(join(s.root, 'Markets'))).sort()).toEqual(['A.json', 'B.json']);
+  });
+
+  test('the page the app made for a folder another app created is not recorded', async () => {
+    const s = await setup();
+    const { messageId } = await sendOk(s, 'Add a paragraph while others folder');
+    const message = await doneOf(s, messageId);
+    expect(message.changes?.map((c) => c.path)).toEqual(['Markets/A.json', 'Markets/A/drawing-x1.svg']);
+    expect(await exists(join(s.root, 'Markets/Other.json'))).toBe(true);
   });
 
   test('a save planned before an undo is refused as stale, and the restored text stays', async () => {

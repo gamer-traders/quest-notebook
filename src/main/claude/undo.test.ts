@@ -73,6 +73,23 @@ test('a path outside the workspace is refused', async () => {
   expect(await exists(join(root, '../x.json'))).toBe(false);
 });
 
+test('a sub-page and the page made for its new folder both go, with the folder, in either order', async () => {
+  for (const newSpace of [false, true]) {
+    const space = newSpace ? 'NewSpace' : 'Markets';
+    const flag = newSpace ? { newSpace: true } : {};
+    const both = [{ ...created(`${space}/Folder.json`, 'f'), ...flag }, { ...created(`${space}/Folder/X.json`, 'x'), ...flag }];
+    for (const order of [both, [...both].reverse()]) {
+      const root = await workspace({ 'Markets/A.json': 'a', [`${space}/Folder.json`]: 'f', [`${space}/Folder/X.json`]: 'x' });
+      const result = await undoChanges(root, order, { force: false, trash });
+      expect(result.undone.sort()).toEqual([`${space}/Folder.json`, `${space}/Folder/X.json`]);
+      expect(await exists(join(root, `${space}/Folder`))).toBe(false);
+      expect(await exists(join(root, `${space}/Folder.json`))).toBe(false);
+      expect(await exists(join(root, space))).toBe(!newSpace);
+      expect(await exists(join(root, 'Markets/A.json'))).toBe(true);
+    }
+  }
+});
+
 test('a space folder the turn created goes with its created page', async () => {
   const root = await workspace({ 'Markets/x.json': 'k', 'NewSpace/Page.json': 'p' });
   await undoChanges(root, [{ ...created('NewSpace/Page.json', 'p'), newSpace: true }], { force: false, trash });

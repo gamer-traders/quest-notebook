@@ -7,6 +7,7 @@
   Prompt words:
     (none of these)  edits Markets/A.json, creates Markets/A/drawing-x1.svg, prints read-and-edit.jsonl
     "others write"   the same, and also changes Markets/B.json without saying so (as another app would)
+    "others folder"  the same, and also creates Markets/Other/Y.json without saying so
     "sleep"          prints the init line and waits. SIGINT exits 130, unless:
       "stubborn"       SIGINT is ignored
       "deaf"           SIGINT and SIGTERM are ignored
@@ -15,6 +16,7 @@
     "linger"         replies, then exits while a grandchild keeps stdout open for 5 s (its pid goes in the log)
     "two parts"      text, a Read, then more text
     "new space"      creates NewSpace/P.json with a Write
+    "sub page"       creates Markets/Folder/X.json with a Write, in a folder that wasn't there
     "fail auth"      a failed login result, exit 1
     "refuse"         prints denied.jsonl
     "odd session"    a reply whose session id isn't a UUID
@@ -141,6 +143,16 @@ function turn() {
     return;
   }
 
+  if (prompt.includes('sub page')) {
+    const page = `${JSON.stringify({ id: 'sub00001', title: 'X', position: 0, blocks: [] }, null, 2)}\n`;
+    print([init, tool('Write', 'toolu_sub_1', { file_path: `${cwd}/Markets/Folder/X.json`, content: page })], () => {
+      mkdirSync(join(cwd, 'Markets/Folder'), { recursive: true });
+      writeFileSync(join(cwd, 'Markets/Folder/X.json'), page);
+      print([delta('I made a sub-page.'), success('I made a sub-page.')]);
+    });
+    return;
+  }
+
   if (prompt.includes('fail auth')) {
     process.exitCode = 1;
     print([
@@ -164,6 +176,10 @@ function turn() {
 
   editPages();
   if (prompt.includes('others write')) appendTo('Markets/B.json', OTHER);
+  if (prompt.includes('others folder')) {
+    mkdirSync(join(cwd, 'Markets/Other'), { recursive: true });
+    writeFileSync(join(cwd, 'Markets/Other/Y.json'), `${JSON.stringify({ id: 'oth00001', title: 'Y', position: 0, blocks: [] }, null, 2)}\n`);
+  }
   print(fixture('read-and-edit.jsonl'));
 }
 
