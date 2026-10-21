@@ -346,3 +346,19 @@ test('drawing files written before a failure are remembered, so they never come 
   expect(result.ok).toBe(false);
   expect(index.pages.get('a')!.sidecars!['drawing-a.svg'].text).toBe(appMade(2));
 });
+
+test('two pages’ drawings whose ids differ only in case never share a file, even after one moves beside the other', async () => {
+  await setup({
+    'Markets/A.json': page('a', 'A'),
+    'Markets/A/drawing-d1.svg': '<svg>a</svg>',
+    'Lessons/B.json': page('b', 'B'),
+    'Lessons/B/drawing-D1.svg': '<svg>b</svg>',
+  });
+  // B moves to A's space and takes A's name, but for case: on a case-insensitive disk that is A's file and folder.
+  const result = await apply({ saves: [{ ...save('b', 'a', 'Markets'), sidecars: { 'drawing-D1.svg': '<svg>b2</svg>' } }] });
+  expect(result).toEqual({ ok: true, paths: { b: 'Markets/a 2.json' } });
+  expect(await list('Markets')).toEqual(['A', 'A.json', 'a 2', 'a 2.json']);
+  expect(await list('Markets/A')).toEqual(['drawing-d1.svg']);
+  expect(await read('Markets/A/drawing-d1.svg')).toBe('<svg>a</svg>');
+  expect(await read('Markets/a 2/drawing-D1.svg')).toBe('<svg>b2</svg>');
+});
