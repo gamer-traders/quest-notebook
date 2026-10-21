@@ -183,6 +183,10 @@ All times are ISO 8601 UTC. Candles you typed or drew have no real dates, so the
   - ` 2`, ` 3`, … is added when a sibling already has that name, ignoring case
 - **A space's name is its folder name.** Renaming a space makes its name safe for a folder the same way.
 - **A file renamed outside the app** (same id, new name) takes the new file name as its title.
+- **An edit wins over a delete**, wherever each is made:
+  - A page deleted outside while it has unsent edits in the app is kept. It's saved again whole, with every drawing, and a notice names it.
+  - A kept page whose parent or space went too moves to the top of its space, or of the first space left.
+  - A page deleted in the app while its file changed on disk comes back with the change.
 - **Loading rules:**
   - A missing `id` is added and written back, in page-shaped files only (a JSON object with a `blocks` list). Of two files sharing an id, the one that had it before keeps it; on a first scan, the later file in path order gives it up.
   - A missing `title` comes from the file name.

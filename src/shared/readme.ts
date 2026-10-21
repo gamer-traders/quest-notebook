@@ -1,5 +1,5 @@
 /** Which version of the README this is. A README an earlier app version wrote is replaced by this one. */
-export const README_MARKER = '<!-- quest-notebook-readme: 2 -->';
+export const README_MARKER = '<!-- quest-notebook-readme: 3 -->';
 
 /** The README.md written into a new workspace: the file format, for the people and AI tools that open the folder. */
 export const WORKSPACE_README = `# Quest Notebook workspace
@@ -170,4 +170,5 @@ The \`text\` of a block uses Markdown-style marks:
 - **Unreadable files:** a file that isn't valid JSON, or is JSON but not a page (a page is an object with a \`blocks\` list), is shown in the app with the reason, and never written to. Fix it and it reloads.
 - **Fields the app doesn't know** are dropped the next time the app saves that page.
 - **Deleting** a page or space in the app moves its files to the system Trash.
+- **An edit wins over a delete.** A page file deleted while the page has edits in the app not yet saved comes back, with its drawings, and the app says so. A page deleted in the app while its file changes on disk comes back too, with the change.
 `;
