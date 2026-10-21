@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import type { ChartCell, Interval, ItemData } from '../types';
+import { NEW_HEIGHT, type Background as DrawingBackground } from '../drawing/model';
 import { INTERVAL_LABEL, INTERVAL_SEC, useBars, type BarsState } from './market';
 import { candleNumber, customBarSet } from './customData';
 import { formatMoment } from './format';
@@ -34,7 +35,7 @@ export function newChart(partial: Partial<ChartCell> = {}): ChartCell {
   };
 }
 
-export function newItem(type: 'chart' | 'plan' | 'call', chartAbove: ChartCell | null): ItemData {
+export function newItem(type: 'chart' | 'plan' | 'call' | 'drawing', chartAbove: ChartCell | null, background: DrawingBackground = 'blank'): ItemData {
   switch (type) {
     case 'chart':
       return newChart(chartAbove ? { symbol: chartAbove.symbol, interval: chartAbove.interval } : {});
@@ -42,6 +43,8 @@ export function newItem(type: 'chart' | 'plan' | 'call', chartAbove: ChartCell |
       return { id: uid(), type: 'plan', side: 'long', entry: null, stop: null, target: null, reason: '' };
     case 'call':
       return { id: uid(), type: 'call', direction: 'up', bars: 10, reason: '' };
+    case 'drawing':
+      return { id: uid(), type: 'drawing', height: NEW_HEIGHT, background, strokes: [] };
   }
 }
 
@@ -53,6 +56,8 @@ export function itemText(item: ItemData): string {
     case 'plan':
     case 'call':
       return item.reason;
+    case 'drawing':
+      return '';
   }
 }
 

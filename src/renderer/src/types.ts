@@ -1,5 +1,6 @@
 import type { Bar } from './lib/market';
 import type { PageBlock } from './page/blockTypes';
+import type { Background, Stroke } from './drawing/model';
 
 export type Interval = '15m' | '1h' | '4h' | '1d' | '1w';
 
@@ -92,8 +93,17 @@ export interface CallCell {
   reason: string;
 }
 
-/** Data behind an item block (chart, trade plan or prediction) on a page. */
-export type ItemData = ChartCell | PlanCell | CallCell;
+/** Handwriting and sketches: ink strokes on a canvas 1000 units wide that grows downward. */
+export interface DrawingCell {
+  id: string;
+  type: 'drawing';
+  height: number;
+  background: Background;
+  strokes: Stroke[];
+}
+
+/** Data behind an item block (chart, trade plan, prediction or drawing) on a page. */
+export type ItemData = ChartCell | PlanCell | CallCell | DrawingCell;
 
 /** One of the owner's own top-level groups of pages. */
 export interface Space {

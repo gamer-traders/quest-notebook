@@ -1,6 +1,8 @@
 import type { FileBlock, FileCandle, FileChart, FileLook, FilePoint, PageFile } from '@shared/pageFile';
 import { formatJson } from '@shared/formatJson';
-import type { CallCell, ChartCell, Interval, ItemData, MarkLook, Notebook, PlanCell } from '../types';
+import type { CallCell, ChartCell, DrawingCell, Interval, ItemData, MarkLook, Notebook, PlanCell } from '../types';
+import { BACKGROUNDS, INK_COLORS, NEW_HEIGHT, PEN_TOOLS, SIZES, type Stroke } from '../drawing/model';
+import { decodePoints, encodePoints } from '../drawing/strokes';
 import type { NotebookLinkInline, PageBlock } from '../page/blockTypes';
 import type { Bar } from '../lib/market';
 import { INTERVALS } from '../lib/market';
@@ -91,12 +93,20 @@ function itemToFile(item: ItemData): FileBlock {
       return { type: 'tradePlan', id: item.id, side: item.side, entry: item.entry, stop: item.stop, target: item.target, reason: item.reason };
     case 'call':
       return { type: 'prediction', id: item.id, direction: item.direction, bars: item.bars, reason: item.reason };
+    case 'drawing':
+      return {
+        type: 'drawing',
+        id: item.id,
+        height: item.height,
+        background: item.background,
+        strokes: item.strokes.map((s) => ({ tool: s.tool, color: s.color, size: s.size, pressure: s.pressure, points: encodePoints(s.points) })),
+      };
   }
 }
 
 function blockToFile(block: PageBlock, items: Notebook['items'], linkText: LinkText): FileBlock | null {
   const item = items[block.id];
-  if (block.type === 'chart' || block.type === 'tradePlan' || block.type === 'prediction') return item ? itemToFile(item) : null;
+  if (block.type === 'chart' || block.type === 'tradePlan' || block.type === 'prediction' || block.type === 'drawing') return item ? itemToFile(item) : null;
   const text = () => inlineToMarkup(block.content, linkText);
   switch (BLOCK_TO_FILE[block.type] ?? 'paragraph') {
     case 'heading': {
@@ -245,6 +255,18 @@ function callFromFile(raw: Raw, id: string): CallCell {
   return { id, type: 'call', direction: raw.direction === 'down' ? 'down' : 'up', bars: bars !== null && bars >= 1 ? Math.round(bars) : 10, reason: str(raw.reason) };
 }
 
+function drawingFromFile(raw: Raw, id: string): DrawingCell {
+  const height = num(raw.height);
+  const strokes = list(raw.strokes).flatMap((s): Stroke[] => {
+    const points = decodePoints(str(s.points));
+    if (points.length === 0) return [];
+    const tool = oneOf(s.tool, PEN_TOOLS) ?? 'pen';
+    const size = num(s.size);
+    return [{ id: uid(), tool, color: oneOf(s.color, INK_COLORS) ?? 'ink', size: size !== null && size > 0 ? size : SIZES[tool][1], pressure: s.pressure !== false, points }];
+  });
+  return { id, type: 'drawing', height: height !== null && height > 0 ? height : NEW_HEIGHT, background: oneOf(raw.background, BACKGROUNDS) ?? 'blank', strokes };
+}
+
 const textContent = (text: string) => (text ? [{ type: 'text' as const, text, styles: {} }] : []);
 
 function blocksFromFile(rawBlocks: unknown, items: Record<string, ItemData>): PageBlock[] {
@@ -288,6 +310,8 @@ function blocksFromFile(rawBlocks: unknown, items: Record<string, ItemData>): Pa
         return itemBlock('tradePlan', planFromFile);
       case 'prediction':
         return itemBlock('prediction', callFromFile);
+      case 'drawing':
+        return itemBlock('drawing', drawingFromFile);
       default:
         // Nothing is lost: a block the app doesn't know is shown, and saved, as its own JSON.
         return { id: uid(), type: 'codeBlock', props: { language: 'json' }, content: textContent(formatJson(raw).trim()), children };

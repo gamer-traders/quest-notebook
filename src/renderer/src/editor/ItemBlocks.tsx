@@ -86,7 +86,7 @@ function CallBlockView({ blockId }: { blockId: string }) {
 /** What a copied block becomes outside the app: one line of text instead of a dead chart. */
 function ItemSummary({ blockId, label }: { blockId: string; label: string }) {
   const data = useItem(blockId);
-  const detail = !data ? '' : data.type === 'chart' ? chartTitle(data) : data.reason;
+  const detail = !data || data.type === 'drawing' ? '' : data.type === 'chart' ? chartTitle(data) : data.reason;
   return <p>{detail ? `${label}: ${detail}` : label}</p>;
 }
 

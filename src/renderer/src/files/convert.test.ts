@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest';
 import type { FileChart, PageFile } from '@shared/pageFile';
 import { formatJson } from '@shared/formatJson';
-import type { ChartCell, Notebook } from '../types';
+import type { ChartCell, DrawingCell, Notebook } from '../types';
 import type { PageBlock } from '../page/blockTypes';
 import { seedNotebooks } from '../lib/seed';
 import { newChart } from '../lib/cells';
@@ -149,4 +149,34 @@ test('times convert both ways, and unix seconds written by hand are accepted', (
   expect(secFromIso('2024-10-28T00:00:00.500Z')).toBe(1730073600.5);
   expect(secFromIso(1730073600)).toBe(1730073600);
   expect(secFromIso('nonsense')).toBeNaN();
+});
+
+const drawingPage = (item: DrawingCell): Notebook => ({
+  id: 'n1', title: 'D', spaceId: 's', parentId: null, position: 0, createdAt: 0, updatedAt: 0,
+  blocks: [{ id: item.id, type: 'drawing', props: { itemId: item.id }, children: [] }],
+  items: { [item.id]: item },
+});
+
+test('a drawing is written as strokes on one line each, and read back', () => {
+  const item: DrawingCell = {
+    id: 'd1', type: 'drawing', height: 420, background: 'grid',
+    strokes: [{ id: 's1', tool: 'pen', color: 'ink', size: 3, pressure: true, points: [1.5, 2, 0.4, 3, 4, 0.6] }],
+  };
+  const file = pageToFile(drawingPage(item), writeTarget);
+  expect(file.blocks).toEqual([
+    { type: 'drawing', id: 'd1', height: 420, background: 'grid', strokes: [{ tool: 'pen', color: 'ink', size: 3, pressure: true, points: '1.5,2,0.4 3,4,0.6' }] },
+  ]);
+  expect(formatJson(file)).toContain('"points": "1.5,2,0.4 3,4,0.6" }');
+  const back = fileToPage(file, meta({ id: 'n1', spaceId: 's', parentId: null })).notebook.items.d1 as DrawingCell;
+  expect({ ...back, strokes: back.strokes.map((s) => ({ ...s, id: '' })) }).toEqual({ ...item, strokes: [{ ...item.strokes[0], id: '' }] });
+});
+
+test('a drawing written by hand is read with defaults, and strokes without points are dropped', () => {
+  const raw = {
+    blocks: [{ type: 'drawing', id: 'd2', strokes: [{ tool: 'brush', color: 'teal', size: 'big', points: '10,10 20,20,0.9' }, { tool: 'pen', points: 'nope' }] }],
+  };
+  const d = fileToPage(raw, meta({ id: 'n1', spaceId: 's', parentId: null })).notebook.items.d2 as DrawingCell;
+  expect(d).toMatchObject({ type: 'drawing', height: 400, background: 'blank' });
+  expect(d.strokes).toHaveLength(1);
+  expect(d.strokes[0]).toMatchObject({ tool: 'pen', color: 'ink', size: 3, pressure: true, points: [10, 10, 0.5, 20, 20, 0.9] });
 });

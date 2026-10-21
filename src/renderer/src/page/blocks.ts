@@ -80,7 +80,7 @@ export function itemsUnderChart(nb: Notebook, chartId: string): (PlanCell | Call
     if (data.type === 'chart') {
       if (inside) break;
       inside = data.id === chartId;
-    } else if (inside) {
+    } else if (inside && (data.type === 'plan' || data.type === 'call')) {
       out.push(data);
     }
   }

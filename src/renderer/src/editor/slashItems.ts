@@ -28,7 +28,7 @@ const ICONS = {
 const ITEM_GROUP = 'Charts and trades';
 
 /** Files a new chart, plan or prediction under the notebook, then puts its block at the caret. */
-function insertItem(editor: PageEditor, notebookId: string, kind: keyof typeof ITEM_BLOCK_FOR) {
+function insertItem(editor: PageEditor, notebookId: string, kind: Exclude<keyof typeof ITEM_BLOCK_FOR, 'drawing'>) {
   const { notebooks, addItem } = useStore.getState();
   const nb = notebooks.find((n) => n.id === notebookId);
   if (!nb) return;

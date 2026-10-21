@@ -94,6 +94,31 @@ README.md                     this file
 - **Colours:** \`yellow\`, \`blue\`, \`green\`, \`red\`, \`purple\` or \`gray\`.
 - **Line styles:** \`line\` is \`solid\`, \`dashed\` or \`dotted\`, and \`width\` is \`thin\`, \`normal\` or \`thick\`.
 
+## Drawings
+
+A \`drawing\` block holds handwriting and sketches as ink strokes:
+
+\`\`\`json
+{ "type": "drawing", "id": "d81k2m0q", "height": 420, "background": "grid",
+  "strokes": [
+    { "tool": "pen", "color": "ink", "size": 3, "pressure": true, "points": "120.5,80.2,0.42 121.3,81,0.47" }
+  ] }
+\`\`\`
+
+| field | meaning |
+|---|---|
+| \`height\` | In drawing units. A drawing is always 1000 units wide, with y going down. |
+| \`background\` | \`blank\`, \`grid\` or \`lines\`. |
+| \`tool\` | \`pen\`, \`pencil\`, \`marker\` or \`highlighter\`. |
+| \`color\` | \`ink\` (black, or white on a dark page), \`yellow\`, \`blue\`, \`green\`, \`red\`, \`purple\` or \`gray\`. |
+| \`size\` | The line's width at full pressure. |
+| \`pressure\` | \`true\` when the points carry a pen's pressure; \`false\` for mouse strokes, whose width comes from speed. |
+| \`points\` | \`x,y,pressure\` triples separated by spaces. Pressure runs from 0 to 1. |
+
+- **A picture of each drawing** is written beside its page, as \`<page folder>/drawing-<id>.svg\`, where the page folder is the folder named like the page.
+  - Tools that look at images can read the handwriting there.
+  - The app writes it whenever it saves the drawing, so edit the strokes, not the SVG.
+
 ## Text markup
 
 The \`text\` of a block uses Markdown-style marks:
