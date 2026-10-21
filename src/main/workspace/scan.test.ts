@@ -152,3 +152,17 @@ test('a copy of a page made while the app watches gets a new id, and the origina
   expect(copy.id).not.toBe('orig');
   expect(JSON.parse(await read(root, 'Markets/A copy.json')).id).toBe(copy.id);
 });
+
+test('a folder holding only drawing pictures is not a page', async () => {
+  // Left behind when a page with drawings is deleted or renamed outside the app.
+  const root = await tmpWorkspace({ 'Markets/New.json': page('n', 'New'), 'Markets/Old/drawing-d1.svg': '<svg/>', 'Markets/Old/.DS_Store': '' });
+  const { snapshot } = await scanWorkspace(root);
+  expect(snapshot.pages.map((p) => p.path)).toEqual(['Markets/New.json']);
+  await expect(read(root, 'Markets/Old.json')).rejects.toThrow();
+});
+
+test('an empty folder still becomes a page', async () => {
+  const root = await tmpWorkspace({ 'Markets/Ideas/': '' });
+  const { snapshot } = await scanWorkspace(root);
+  expect(snapshot.pages.map((p) => p.path)).toEqual(['Markets/Ideas.json']);
+});

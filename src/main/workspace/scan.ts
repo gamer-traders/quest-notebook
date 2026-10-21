@@ -3,7 +3,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { formatJson } from '@shared/formatJson';
 import { nameKey } from '@shared/names';
-import { EMPTY_UI, type PageRecord, type SpaceRecord, type UiState, type WorkspaceConfig, type WorkspaceSnapshot } from '@shared/ipc';
+import { EMPTY_UI, SIDECAR_NAME, type PageRecord, type SpaceRecord, type UiState, type WorkspaceConfig, type WorkspaceSnapshot } from '@shared/ipc';
 import { insideRoot, writeFileAtomic } from './paths';
 
 /** What main knows of each file it has seen, so it can tell its own writes from changes made outside. */
@@ -153,6 +153,9 @@ async function walkFolder(walk: Walk, dir: string, spaceId: string, parentId: st
   let position = highestPosition(records);
   for (const folder of folderNames) {
     if (pageNames.has(nameKey(folder))) continue;
+    // Drawing pictures left behind by a page deleted or renamed outside the app don't make a page.
+    const inside = (await readdir(insideRoot(walk.root, `${dir}/${folder}`))).filter((name) => !isIgnoredName(name));
+    if (inside.length > 0 && inside.every((name) => SIDECAR_NAME.test(name))) continue;
     const id = newId();
     const now = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
     const rel = `${dir}/${folder}.json`;
