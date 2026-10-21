@@ -43,10 +43,11 @@ export function baselineFor(slice: SyncSlice, unsaved: Set<string>, drawingsToWr
   const write = linkWriter(slice.notebooks, slice.spaces);
   const baseline: Baseline = new Map();
   for (const nb of slice.notebooks) {
-    if (nb.loadError || unsaved.has(nb.id)) continue;
+    if (nb.loadError) continue;
     const drawings = drawingsOf(nb);
     for (const id of drawingsToWrite.get(nb.id) ?? []) drawings.delete(id);
-    baseline.set(nb.id, { json: serialize(nb, write), spaceId: nb.spaceId, parentId: nb.parentId, drawings });
+    // A page to write back gets its file written; its drawings are on disk as they are, and stay so.
+    baseline.set(nb.id, { json: unsaved.has(nb.id) ? '' : serialize(nb, write), spaceId: nb.spaceId, parentId: nb.parentId, drawings });
   }
   return baseline;
 }
@@ -179,8 +180,13 @@ export interface SyncHandle {
   applyFromDisk(update: () => void, seq?: number): void;
   /** Pages to write back even if nothing in them changes, such as files that were missing fields. */
   markDirty(ids: Iterable<string>): void;
-  /** Drawings to write to their files, by page, such as drawing files written by hand. The page files are left as they are. */
+  /** Drawings to write to their files, by page, such as strokes moving out of the page. The page files are left as they are. */
   writeDrawings(pageId: string, drawingIds: Iterable<string>): void;
+  /**
+   * Drawings changed on disk, for a page with unsent edits: each one not touched here since it was last on disk
+   * takes the disk's version. The page's other edits stay.
+   */
+  adoptDrawings(pageId: string, drawings: DrawingCell[]): void;
   /** Pages with edits not yet sent to disk. An outside change to one of them loses to the edit. */
   pendingIds(): Set<string>;
   stop(): void;
@@ -243,16 +249,21 @@ export function startSync<S extends SyncedState>(
     }
   };
 
+  // Pages whose save failed or was refused as stale: their edits are still only here.
+  const unsent = new Set<string>();
+
   async function send(batch: FlushBatch) {
     let failed: string[] = [];
     try {
       const result = await api.flush({ ...batch, root, seenSeq });
       useSaveStatus.setState({ error: result.ok ? null : (result.error ?? 'Saving failed') });
+      for (const id of Object.keys(result.paths)) unsent.delete(id);
       if (!result.ok) failed = batch.saves.filter((s) => !(s.id in result.paths)).map((s) => s.id);
       // Saves of pages that changed on disk meanwhile are planned again, from the page as it is now.
       for (const id of result.stale ?? []) {
         baseline.delete(id);
         dirty.add(id);
+        unsent.add(id);
       }
       if (result.stale?.length) schedule();
     } catch (error) {
@@ -264,6 +275,7 @@ export function startSync<S extends SyncedState>(
       for (const id of failed) {
         baseline.delete(id);
         dirty.add(id);
+        unsent.add(id);
       }
       schedule(RETRY_DELAY);
     }
@@ -345,12 +357,26 @@ export function startSync<S extends SyncedState>(
     },
 
     markDirty(ids) {
-      // Forgetting what was sent makes the page's file differ, so it's written whatever it holds.
+      // Forgetting the page file that was sent makes it differ, so it's written whatever it holds. Its
+      // drawings are on disk as they are, and aren't written for this.
       for (const id of ids) {
         dirty.add(id);
-        baseline.delete(id);
+        const sent = baseline.get(id);
+        if (sent) baseline.set(id, { ...sent, json: '' });
       }
       if (dirty.size) schedule();
+    },
+
+    adoptDrawings(pageId, drawings) {
+      const onDisk = baseline.get(pageId)?.drawings;
+      const page = store.getState().notebooks.find((n) => n.id === pageId);
+      if (!onDisk || !page) return;
+      const fresh = drawings.filter((d) => page.items[d.id] !== undefined && page.items[d.id] === onDisk.get(d.id));
+      if (!fresh.length) return;
+      // The drawings weren't touched here, so the disk's version is the drawing: it's shown, and not sent back.
+      for (const d of fresh) onDisk.set(d.id, d);
+      const items = { ...page.items, ...Object.fromEntries(fresh.map((d) => [d.id, d])) };
+      store.setState((s) => ({ notebooks: s.notebooks.map((n) => (n.id === pageId ? { ...n, items } : n)) }) as Partial<S>);
     },
 
     writeDrawings(pageId, drawingIds) {
@@ -362,7 +388,7 @@ export function startSync<S extends SyncedState>(
 
     pendingIds() {
       // Pages waiting only to have fields written back aren't edits: an outside change still reaches them.
-      const pending = new Set<string>();
+      const pending = new Set<string>(unsent);
       const sent = new Map(prev.notebooks.map((n) => [n.id, n]));
       for (const nb of store.getState().notebooks) if (sent.get(nb.id) !== nb) pending.add(nb.id);
       return pending;

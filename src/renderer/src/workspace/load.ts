@@ -1,5 +1,5 @@
 import type { DiskDelta, PageRecord, WorkspaceSnapshot } from '@shared/ipc';
-import type { Notebook, Space } from '../types';
+import type { DrawingCell, Notebook, Space } from '../types';
 import { childrenOf } from '../page/tree';
 import { fileToPage } from '../files/convert';
 import { resolveLinks } from '../files/links';
@@ -125,4 +125,16 @@ export function deltaToNotebooks(
   const siblingsOf = (r: PageRecord) => current.filter((n) => n.spaceId === r.spaceId && n.parentId === r.parentId && n.id !== r.id).map((n) => n.position);
   const { notebooks, repaired, drawingsToWrite } = recordsToNotebooks(delta.pages, positionOf, siblingsOf);
   return { upserts: notebooks, removed: delta.removed, repaired, drawingsToWrite };
+}
+
+/** The drawings a page record holds, read from its file and its drawing files. None when the file can't be read. */
+export function drawingsIn(record: PageRecord): DrawingCell[] {
+  if (record.error !== undefined) return [];
+  try {
+    const meta = { id: record.id, spaceId: record.spaceId, parentId: record.parentId, path: record.path, fileTimeMs: record.mtimeMs, fallbackPosition: 0 };
+    const { notebook } = fileToPage(record.file, meta, record.drawings ?? {});
+    return Object.values(notebook.items).filter((item): item is DrawingCell => item.type === 'drawing');
+  } catch {
+    return [];
+  }
 }

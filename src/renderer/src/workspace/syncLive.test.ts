@@ -141,3 +141,17 @@ test('batches say which disk change the window has seen, and saves refused as st
   expect(batches).toHaveLength(2);
   expect(batches[1].saves.map((s) => s.id)).toEqual(['a']);
 });
+
+test('a page whose save failed or was refused as stale counts as unsaved until it is saved', async () => {
+  vi.useFakeTimers();
+  flushResult = async () => ({ ok: false, error: 'Disk full', paths: {} });
+  useStore.getState().updateNotebook('a', { title: 'A failed' });
+  await sync.flush();
+  expect(sync.pendingIds().has('a')).toBe(true);
+  flushResult = async () => ({ ok: true, paths: {}, stale: ['a'] });
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(sync.pendingIds().has('a')).toBe(true);
+  flushResult = async () => ({ ok: true, paths: { a: 'Markets/A.json' } });
+  await vi.advanceTimersByTimeAsync(400);
+  expect(sync.pendingIds().has('a')).toBe(false);
+});

@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, expect, test } from 'vitest';
 import type { FlushBatch, QuestApi, WorkspaceSnapshot } from '@shared/ipc';
 import { useStore } from '../store';
+import type { DrawingCell } from '../types';
 import { unsavedEditors } from '../editor/pending';
 import type { PageBlock } from '../page/blockTypes';
 import { applyDisk, flushWorkspace, startWorkspace, stopWorkspace } from './session';
@@ -79,15 +80,41 @@ test('a page only waiting to have missing fields written back still takes an out
   expect((b.blocks[0].content as { text: string }[])[0].text).toBe('v2');
 });
 
-test('a drawing file written by hand is rewritten in the app’s form, and the page file left as it is', async () => {
-  const handmade = '<svg viewBox="0 0 1000 300"><path data-points="10,10 90,90,0.8"/></svg>';
-  const page = { ...file('b', 'B', 'bee'), blocks: [{ type: 'drawing', id: 'd1', file: 'drawing-d1.svg' }] };
-  applyDisk({ seq: 1, spaces: snapshot.spaces, journalSpaceId: null, pages: [{ ...snapshot.pages[1], file: page, drawings: { 'drawing-d1.svg': handmade } }], removed: [] });
+const handmade = '<svg viewBox="0 0 1000 300"><path data-points="10,10 90,90,0.8"/></svg>';
+const drawingPageFile = (text: string) => ({ ...file('b', 'B', text), blocks: [{ type: 'paragraph', text }, { type: 'drawing', id: 'd1', file: 'drawing-d1.svg' }] });
+const d1 = () => useStore.getState().notebooks.find((n) => n.id === 'b')!.items.d1 as DrawingCell;
+
+test('a drawing file written by hand is shown, and left as it is', async () => {
+  applyDisk({ seq: 1, spaces: snapshot.spaces, journalSpaceId: null, pages: [{ ...snapshot.pages[1], file: drawingPageFile('bee'), drawings: { 'drawing-d1.svg': handmade } }], removed: [] });
+  expect(d1().strokes).toHaveLength(1);
+  await flushWorkspace();
+  expect(batches.flatMap((b) => b.saves).filter((s) => s.id === 'b')).toEqual([]);
+});
+
+test('a page written back for a missing field doesn’t rewrite its drawings', async () => {
+  const missing = { blocks: [{ type: 'drawing', id: 'd1', file: 'drawing-d1.svg' }] };
+  applyDisk({ seq: 1, spaces: snapshot.spaces, journalSpaceId: null, pages: [{ ...snapshot.pages[1], file: missing, drawings: { 'drawing-d1.svg': handmade } }], removed: [] });
   await flushWorkspace();
   const save = batches.flatMap((b) => b.saves).find((s) => s.id === 'b')!;
-  expect(save.json).toBeUndefined();
-  expect(save.sidecars['drawing-d1.svg']).toContain('data-points="10,10,0.5 90,90,0.8"');
-  expect(save.sidecars['drawing-d1.svg']).toContain(' d="M');
+  expect(save.json).toBeDefined();
+  expect(save.sidecars).toEqual({});
+});
+
+test('an outside change to a drawing reaches a page that is being typed on', async () => {
+  applyDisk({ seq: 1, spaces: snapshot.spaces, journalSpaceId: null, pages: [{ ...snapshot.pages[1], file: drawingPageFile('bee'), drawings: { 'drawing-d1.svg': handmade } }], removed: [] });
+  await flushWorkspace();
+  batches = [];
+  useStore.getState().updateNotebook('b', { title: 'B edited' });
+  const threeStrokes = '<svg viewBox="0 0 1000 300"><path data-points="10,10 90,90,0.8"/><path data-points="20,20 30,30"/><path data-points="40,40 50,50"/></svg>';
+  applyDisk({ seq: 2, spaces: snapshot.spaces, journalSpaceId: null, pages: [{ ...snapshot.pages[1], file: drawingPageFile('bee'), drawings: { 'drawing-d1.svg': threeStrokes } }], removed: [] });
+  // The typed title stays, and the drawing shows the outside strokes.
+  expect(useStore.getState().notebooks.find((n) => n.id === 'b')!.title).toBe('B edited');
+  expect(d1().strokes).toHaveLength(3);
+  await flushWorkspace();
+  const save = batches.flatMap((b) => b.saves).find((s) => s.id === 'b')!;
+  expect(JSON.parse(save.json!).title).toBe('B edited');
+  // The outside drawing is on disk already: it isn't sent back.
+  expect(save.sidecars).toEqual({});
 });
 
 test('a drawing file whose block was removed on disk is left alone', async () => {

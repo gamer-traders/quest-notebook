@@ -4,7 +4,7 @@ import { useStore } from '../store';
 import { seedFor } from '../lib/seed';
 import { childrenOf } from '../page/tree';
 import { unsavedEditors } from '../editor/pending';
-import { deltaToNotebooks, snapshotToState } from './load';
+import { deltaToNotebooks, drawingsIn, snapshotToState } from './load';
 import { startSync, useSaveStatus, type SyncHandle } from './sync';
 
 let sync: SyncHandle | null = null;
@@ -59,6 +59,9 @@ export function applyDisk(delta: DiskDelta): void {
   if (repaired.size) sync.markDirty(repaired);
   // Drawing files written by hand, or missing, are written in the app's form.
   for (const [pageId, ids] of drawingsToWrite) sync.writeDrawings(pageId, ids);
+
+  // A page being edited keeps its edits, but takes the outside version of each drawing it didn't touch.
+  for (const record of delta.pages) if (pending.has(record.id)) sync.adoptDrawings(record.id, drawingsIn(record));
 
   // A page being edited keeps its edit, but goes where its file went, so the edit is saved there.
   const moved = new Map(delta.pages.filter((p) => pending.has(p.id) && p.error === undefined).map((p) => [p.id, p]));
