@@ -17,7 +17,7 @@ import {
 } from '@shared/ipc';
 import type { WorkspaceSession } from '../workspace/session';
 import { chatTitle, deleteChat, listChats, newChatId, readChat, writeChat } from './chats';
-import { buildPrompt, claudeArgs, claudeEnv } from './command';
+import { buildPrompt, claudeArgs, claudeEnv, isSessionId } from './command';
 import { LineSplitter, parseStreamLine, type StreamItem } from './events';
 import { WORKSPACE_GUIDE } from './guide';
 import { TurnChanges } from './turns';
@@ -30,8 +30,10 @@ export interface ClaudeDeps {
   trash(abs: string): Promise<void>;
   /** Reports a running turn to the window. */
   send(e: ClaudeEvent): void;
-  /** How long a stopped turn gets after SIGINT before SIGTERM. */
+  /** How long a stopped turn gets after SIGINT before SIGTERM, and again before SIGKILL. */
   stopGraceMs?: number;
+  /** How long the child's output may stay open after it exits (held by something it started) before the turn ends anyway. */
+  exitGraceMs?: number;
 }
 
 /** What the service uses of the open workspace. */
@@ -39,7 +41,10 @@ export type ClaudeSession = Pick<WorkspaceSession, 'settle' | 'exclusive' | 'pag
 
 const BUSY = 'Claude is still answering';
 const CLOSED = 'This workspace is closed';
+const CLOSED_MID_TURN = 'Stopped: the workspace was closed';
 const NOT_FOUND = "Couldn't find Claude Code";
+/** The CLI no longer has the session a chat would resume. */
+const LOST_SESSION = /no conversation found|session.*not found/i;
 const MAX_MESSAGE = 100_000;
 const STDERR_KEEP = 4096;
 const STATUS_TIMEOUT_MS = 10_000;
@@ -58,6 +63,8 @@ interface Turn {
   chat: Chat;
   messageId: string;
   created: string;
+  /** The turn passed --resume. */
+  resumed: boolean;
   /** The workspace folder as the CLI sees it: it reports absolute paths in this form. */
   realRoot: string;
   /** Space folder names when the turn started. */
@@ -68,13 +75,19 @@ interface Turn {
   child: ChildProcess | null;
   splitter: LineSplitter;
   text: string[];
+  /** Some text has come, so a new text block starts after a break. */
+  hasText: boolean;
+  breakPending: boolean;
   actions: ChatAction[];
   sessionId: string | null;
   done: Done | null;
   stopped: boolean;
   stderr: string;
   exiting: boolean;
+  /** The reply is being written to the chat: by the end of the turn, or by close. */
+  saving: boolean;
   stopTimer: ReturnType<typeof setTimeout> | null;
+  exitTimer: ReturnType<typeof setTimeout> | null;
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -131,7 +144,8 @@ export function parseUndoArgs(args: unknown[]): { chatId: string; messageId: str
 
 /**
  * Claude in one open workspace: runs the claude CLI one turn at a time, reports what it says and does, keeps the
- * chats, and undoes what a reply changed. Once closed it writes and reports nothing more.
+ * chats, and undoes what a reply changed. Once closed it reports nothing more, and writes nothing but the record of
+ * a turn the close cut short, in its own workspace.
  */
 export class ClaudeService {
   private closed = false;
@@ -164,6 +178,11 @@ export class ClaudeService {
     // An npm-installed claude is a node script, and an app opened from Finder has a bare PATH. With nvm, node sits next to claude.
     env.PATH = env.PATH ? `${dirname(claudePath)}${delimiter}${env.PATH}` : dirname(claudePath);
     return env;
+  }
+
+  /** A claude that couldn't be started is looked for again next time. */
+  private forget(claudePath: string): void {
+    if (this.claudePath === claudePath) this.claudePath = null;
   }
 
   async send(req: SendRequest): Promise<{ chatId: string; messageId: string } | { error: string }> {
@@ -201,6 +220,7 @@ export class ClaudeService {
         chat,
         messageId: randomUUID(),
         created: new Date().toISOString(),
+        resumed: chat.sessionId !== null,
         realRoot,
         spaces: new Set(this.session.snapshot.spaces.map((s) => s.name)),
         changes: new TurnChanges(),
@@ -208,13 +228,17 @@ export class ClaudeService {
         child: null,
         splitter: new LineSplitter(),
         text: [],
+        hasText: false,
+        breakPending: false,
         actions: [],
         sessionId: null,
         done: null,
         stopped: false,
         stderr: '',
         exiting: false,
+        saving: false,
         stopTimer: null,
+        exitTimer: null,
       };
       this.turn = turn;
       started = true;
@@ -267,6 +291,7 @@ export class ClaudeService {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch (error) {
+      this.forget(claudePath);
       void this.end(turn, { code: null, signal: null, error: error instanceof Error ? error : new Error(String(error)) });
       return;
     }
@@ -274,6 +299,7 @@ export class ClaudeService {
     // As text, so a chunk never ends half way through a character.
     child.stdout?.setEncoding('utf8');
     child.stdout?.on('data', (chunk: string) => {
+      if (this.closed) return;
       for (const line of turn.splitter.push(chunk)) this.line(turn, line);
     });
     child.stderr?.setEncoding('utf8');
@@ -285,7 +311,18 @@ export class ClaudeService {
     child.stderr?.on('error', () => {});
     child.on('error', (error) => {
       // After a spawn that worked, an error (a failed kill) leaves the child running, and its close ends the turn.
-      if (child.pid === undefined) void this.end(turn, { code: null, signal: null, error });
+      if (child.pid !== undefined) return;
+      this.forget(claudePath);
+      void this.end(turn, { code: null, signal: null, error });
+    });
+    // Close waits for the output to close too. Something the CLI started may hold it open after the CLI is gone:
+    // after a while the output is let go, so the turn still ends.
+    child.on('exit', () => {
+      turn.exitTimer = setTimeout(() => {
+        turn.exitTimer = null;
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      }, this.deps.exitGraceMs ?? 2000);
     });
     child.on('close', (code, signal) => void this.end(turn, { code, signal }));
   }
@@ -297,9 +334,21 @@ export class ClaudeService {
   private item(turn: Turn, item: StreamItem): void {
     switch (item.kind) {
       case 'session':
-        turn.sessionId = item.sessionId;
+        // It goes on the command line of the next turn: anything but a UUID is ignored.
+        if (isSessionId(item.sessionId)) turn.sessionId = item.sessionId;
+        return;
+      case 'text-start':
+        if (turn.hasText) turn.breakPending = true;
         return;
       case 'text':
+        if (item.text === '') return;
+        // Text from a new block (after a tool call, say) mustn't run on from the last.
+        if (turn.breakPending) {
+          turn.breakPending = false;
+          turn.text.push('\n\n');
+          this.emit(turn, { kind: 'text', text: '\n\n' });
+        }
+        turn.hasText = true;
         turn.text.push(item.text);
         this.emit(turn, { kind: 'text', text: item.text });
         return;
@@ -337,39 +386,53 @@ export class ClaudeService {
     turn.changes.add(changes.map((change) => (turn.spaces.has(change.path.split('/')[0]) ? change : { ...change, newSpace: true })));
   }
 
+  /**
+   * The reply as the turn left it: refusals marked, a Write on a file that was there counted as an edit, and only the
+   * changes to files Claude itself wrote. A file another app changed during the turn isn't Claude's, so it's never undone.
+   */
+  private reply(turn: Turn, error: string | undefined): ChatMessage {
+    const refused = new Set(turn.done?.refused ?? []);
+    for (const action of turn.actions) if (action.id !== undefined && refused.has(action.id)) action.refused = true;
+    const written = new Set(turn.actions.flatMap((a) => ((a.verb === 'edited' || a.verb === 'created') && !a.refused && a.path !== undefined ? [a.path] : [])));
+    const changes = turn.changes.list().filter((c) => written.has(c.path));
+    const kinds = new Map(changes.map((c) => [c.path, c.kind]));
+    for (const action of turn.actions) {
+      if (action.verb === 'created' && action.path !== undefined && kinds.get(action.path) === 'edited') action.verb = 'edited';
+    }
+    const message: ChatMessage = { id: turn.messageId, role: 'assistant', text: turn.text.join(''), created: turn.created, actions: turn.actions };
+    if (changes.length) message.changes = changes;
+    if (error !== undefined) message.error = error;
+    return message;
+  }
+
+  /** The chat with the reply added. Only a turn that ended well gives the chat a session to resume; one the CLI lost is dropped. */
+  private withReply(turn: Turn, message: ChatMessage): Chat {
+    const { chat } = turn;
+    if (turn.done?.ok === true && turn.sessionId) chat.sessionId = turn.sessionId;
+    else if (turn.resumed && message.error !== undefined && LOST_SESSION.test(message.error)) chat.sessionId = null;
+    chat.updated = new Date().toISOString();
+    chat.messages.push(message);
+    return chat;
+  }
+
   /** The child is gone (or never started): the reply is finished, saved, and reported. */
   private async end(turn: Turn, exit: Exit): Promise<void> {
     if (turn.exiting) return;
     turn.exiting = true;
-    if (turn.stopTimer) clearTimeout(turn.stopTimer);
-    turn.stopTimer = null;
+    this.clearTimers(turn);
     try {
+      // A close has already kept the record of this turn.
       if (this.closed) return;
       for (const line of turn.splitter.end()) this.line(turn, line);
       // So the turn's last writes are seen.
       await this.session.settle().catch((error: unknown) => console.error('Reading the workspace after a turn failed:', error));
       if (this.closed) return;
       turn.recording = false;
-      const changes = turn.changes.list();
-
-      const refused = new Set(turn.done?.refused ?? []);
-      const kinds = new Map(changes.map((c) => [c.path, c.kind]));
-      for (const action of turn.actions) {
-        if (action.id !== undefined && refused.has(action.id)) action.refused = true;
-        if (action.verb === 'created' && action.path !== undefined && kinds.get(action.path) === 'edited') action.verb = 'edited';
-      }
-      const message: ChatMessage = { id: turn.messageId, role: 'assistant', text: turn.text.join(''), created: turn.created, actions: turn.actions };
-      if (changes.length) message.changes = changes;
-      const error = this.errorOf(turn, exit);
-      if (error !== undefined) message.error = error;
-
+      const message = this.reply(turn, this.errorOf(turn, exit));
       if (turn.done?.loggedOut) this.loggedOut = true;
       else if (turn.done?.ok) this.loggedOut = false;
-
-      const { chat } = turn;
-      if (turn.sessionId) chat.sessionId = turn.sessionId;
-      chat.updated = new Date().toISOString();
-      chat.messages.push(message);
+      const chat = this.withReply(turn, message);
+      turn.saving = true;
       try {
         await writeChat(this.root, chat);
       } catch (writeError) {
@@ -389,6 +452,13 @@ export class ClaudeService {
     }
   }
 
+  private clearTimers(turn: Turn): void {
+    if (turn.stopTimer) clearTimeout(turn.stopTimer);
+    turn.stopTimer = null;
+    if (turn.exitTimer) clearTimeout(turn.exitTimer);
+    turn.exitTimer = null;
+  }
+
   private errorOf(turn: Turn, exit: Exit): string | undefined {
     const { done } = turn;
     if (done?.ok) return undefined;
@@ -398,7 +468,10 @@ export class ClaudeService {
     return `Claude stopped unexpectedly: ${why}`;
   }
 
-  /** SIGINT, then SIGTERM if it's still running after the grace period. The turn ends as usual, as "Stopped". */
+  /**
+   * SIGINT, then SIGTERM and SIGKILL, each after the grace period, while it's still running. Asked again, SIGKILL at
+   * once. The turn ends as usual, as "Stopped".
+   */
   async stop(): Promise<void> {
     if (this.closed) return;
     if (this.turn) this.stopTurn(this.turn);
@@ -407,16 +480,30 @@ export class ClaudeService {
 
   private stopTurn(turn: Turn): void {
     const child = turn.child;
-    if (turn.stopped || turn.exiting || !child || !isRunning(child)) return;
+    if (turn.exiting || !child || !isRunning(child)) return;
+    if (turn.stopped) {
+      if (turn.stopTimer) clearTimeout(turn.stopTimer);
+      turn.stopTimer = null;
+      child.kill('SIGKILL');
+      return;
+    }
     turn.stopped = true;
     child.kill('SIGINT');
     turn.stopTimer = setTimeout(() => {
       turn.stopTimer = null;
-      if (isRunning(child)) child.kill('SIGTERM');
+      if (!isRunning(child)) return;
+      child.kill('SIGTERM');
+      turn.stopTimer = setTimeout(() => {
+        turn.stopTimer = null;
+        if (isRunning(child)) child.kill('SIGKILL');
+      }, this.graceMs);
     }, this.graceMs);
   }
 
-  /** The workspace is closing: the child is ended at once, and nothing more is written or reported. */
+  /**
+   * The workspace is closing: the child is ended at once, and nothing more is reported. A running turn's reply so far
+   * is kept in its chat, in this workspace, so what Claude changed can still be undone after reopening it.
+   */
   close(): void {
     if (this.closed) return;
     this.closed = true;
@@ -433,6 +520,13 @@ export class ClaudeService {
       }, this.graceMs);
       child.once('exit', () => clearTimeout(timer));
     }
+    if (!turn.saving) {
+      turn.saving = true;
+      turn.recording = false;
+      // No settle: the session is closing too. The changes are those already seen.
+      const chat = this.withReply(turn, this.reply(turn, turn.done?.ok ? undefined : CLOSED_MID_TURN));
+      writeChat(this.root, chat).catch((error: unknown) => console.error('Keeping the record of a stopped turn failed:', error));
+    }
   }
 
   /** Looks for the CLI again, and asks it its version and whether it's logged in. */
@@ -448,6 +542,7 @@ export class ClaudeService {
       version = firstLine(out.stdout);
       if (out.code !== 0 || !version) return { state: 'error', path, message: firstLine(out.stderr) || `claude --version failed (exit code ${out.code})` };
     } catch (error) {
+      this.forget(path);
       return { state: 'error', path, message: errorText(error) };
     }
     // Only loggedIn is read: the rest of this output holds the owner's email and organisation.
@@ -513,7 +608,9 @@ export class ClaudeService {
     const recorded: unknown[] = Array.isArray(message.changes) ? message.changes : [];
     const changes = recorded.filter(isUndoable).filter((c) => !undone.includes(c.path) && (wanted === null || wanted.has(c.path)));
     if (this.closed) throw new Error(CLOSED);
-    const result = await this.session.exclusive(() => undoChanges(this.root, changes, { force, trash: this.deps.trash }));
+    // The folder is read again before the queue moves on: a save the window planned before the undo is then refused as
+    // stale, instead of writing over the text just put back.
+    const result = await this.session.exclusive(() => undoChanges(this.root, changes, { force, trash: this.deps.trash }), { rescanAfter: true });
     if (result.undone.length && !this.closed) {
       message.undone = [...undone, ...result.undone.filter((p) => !undone.includes(p))];
       await writeChat(this.root, chat);

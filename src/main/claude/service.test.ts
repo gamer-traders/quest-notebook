@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
-import type { ChatAction, ChatMessage, ClaudeEvent, SendRequest } from '@shared/ipc';
+import type { ChatAction, ChatMessage, ClaudeEvent, DiskDelta, SendRequest } from '@shared/ipc';
 import { WorkspaceSession } from '../workspace/session';
 import { CHATS_DIR, readChat, writeChat } from './chats';
 import { buildPrompt } from './command';
@@ -69,11 +69,17 @@ interface Setup {
   session: WorkspaceSession;
   service: ClaudeService;
   events: ClaudeEvent[];
+  deltas: DiskDelta[];
   children: ChildProcess[];
+  /** Processes the fake left behind on purpose, killed after the test. */
+  strays: number[];
 }
 
-/** A real session on a temp workspace (reached through a symlink, as macOS temp folders are), and the fake CLI. */
-async function setup(over: { locate?: () => Promise<string | null>; spawn?: typeof spawn } = {}): Promise<Setup> {
+/**
+ * A real session on a temp workspace (reached through a symlink, as macOS temp folders are), and the fake CLI.
+ * The fake runs through node; any other path is spawned as it is.
+ */
+async function setup(over: { locate?: () => Promise<string | null>; stopGraceMs?: number } = {}): Promise<Setup> {
   const parent = await mkdtemp(join(tmpdir(), 'quest-claude-'));
   const real = join(parent, 'real');
   await mkdir(join(real, 'Markets'), { recursive: true });
@@ -86,21 +92,18 @@ async function setup(over: { locate?: () => Promise<string | null>; spawn?: type
   withEnv({ FAKE_LOG: log, FAKE_LOGGED_OUT: undefined, FAKE_AUTH_BROKEN: undefined });
 
   const events: ClaudeEvent[] = [];
+  const deltas: DiskDelta[] = [];
   const children: ChildProcess[] = [];
+  const strays: number[] = [];
   let service: ClaudeService | undefined;
-  const trash = (abs: string) => rm(abs, { recursive: true });
-  const session = await WorkspaceSession.open(root, false, { change: () => {}, lost: () => {}, fileChanges: (c) => service?.fileChanges(c) }, trash, 60_000);
-  const spawnFake = ((command: string, args: readonly string[], options: SpawnOptions) => {
-    const child = spawn(process.execPath, [command, ...args], options);
-    children.push(child);
-    return child;
-  }) as unknown as typeof spawn;
+  const session = await WorkspaceSession.open(root, false, { change: (d) => deltas.push(d), lost: () => {}, fileChanges: (c) => service?.fileChanges(c) }, trash, 60_000);
   service = new ClaudeService(root, session, {
     locate: over.locate ?? (async () => FAKE),
-    spawn: over.spawn ?? spawnFake,
+    spawn: spawnVia(children),
     trash,
     send: (e) => events.push(e),
-    stopGraceMs: 200,
+    stopGraceMs: over.stopGraceMs ?? 200,
+    exitGraceMs: 200,
   });
   const made = service;
   cleanups.push(async () => {
@@ -110,9 +113,38 @@ async function setup(over: { locate?: () => Promise<string | null>; spawn?: type
       if (running(child)) child.kill('SIGKILL');
       await exited(child);
     }
+    for (const pid of strays) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        // already gone
+      }
+    }
     await rm(parent, { recursive: true, force: true });
   });
-  return { root, log, session, service, events, children };
+  return { root, log, session, service, events, deltas, children, strays };
+}
+
+const trash = (abs: string) => rm(abs, { recursive: true });
+
+/** A spawn that runs the fake through node, and anything else as it is, keeping every child. */
+function spawnVia(children: ChildProcess[]): typeof spawn {
+  return ((command: string, args: readonly string[], options: SpawnOptions) => {
+    const child = command === FAKE ? spawn(process.execPath, [command, ...args], options) : spawn(command, args, options);
+    children.push(child);
+    return child;
+  }) as unknown as typeof spawn;
+}
+
+/** A second service on the same workspace, as after reopening it. */
+async function reopen(s: Setup): Promise<ClaudeService> {
+  const session = await WorkspaceSession.open(s.root, false, { change: () => {}, lost: () => {} }, trash, 60_000);
+  const service = new ClaudeService(s.root, session, { locate: async () => FAKE, spawn: spawnVia(s.children), trash, send: () => {} });
+  cleanups.push(() => {
+    service.close();
+    session.close();
+  });
+  return service;
 }
 
 const request = (message: string, over: Partial<SendRequest> = {}): SendRequest => ({ chatId: null, message, references: [], openPageId: null, ...over });
@@ -256,7 +288,8 @@ describe('stopping', () => {
     const message = await doneOf(s, messageId);
     expect(message.error).toBe('Stopped');
     expect(s.children[0].exitCode).toBe(130);
-    expect((await readChat(s.root, chatId))?.sessionId).toBe(SESSION_ID);
+    // Only a turn that ended well gives the chat a session to resume.
+    expect((await readChat(s.root, chatId))?.sessionId).toBeNull();
     // The service is free again.
     const next = await sendOk(s, 'Add a paragraph', { chatId });
     await doneOf(s, next.messageId);
@@ -295,21 +328,27 @@ describe('stopping', () => {
     expect(s.events).toEqual([]);
   });
 
-  test('close mid-turn kills the child, and nothing more is written or sent (Review Focus 2)', async () => {
+  test('close mid-turn kills the child and keeps a record of the reply in its own chat, and nothing more is written or sent (Review Focus 2)', async () => {
     const s = await setup();
     const { chatId, messageId } = await sendOk(s, 'noisy sleep');
     await fakeReady(s);
     const chatFile = join(s.root, CHATS_DIR, `${chatId}.json`);
-    const before = await readFile(chatFile, 'utf8');
     const sent = s.events.length;
 
     s.service.close();
     await exited(s.children[0]);
     // The noisy fake printed a last reply as it went: it must be ignored.
     expect(s.children[0].exitCode).toBe(143);
+    const recorded = await waitFor('the record of the closed turn', async () => {
+      const chat = await readChat(s.root, chatId);
+      return chat?.messages.length === 2 ? chat : undefined;
+    });
+    expect(recorded.messages[1]).toEqual({ id: messageId, role: 'assistant', text: '', created: expect.any(String), actions: [], error: 'Stopped: the workspace was closed' });
+    expect(recorded.sessionId).toBeNull();
+    const after = await readFile(chatFile, 'utf8');
     await sleep(300);
 
-    expect(await readFile(chatFile, 'utf8')).toBe(before);
+    expect(await readFile(chatFile, 'utf8')).toBe(after);
     expect(s.events.slice(sent)).toEqual([]);
     expect(s.events.some((e) => e.kind === 'done' && e.messageId === messageId)).toBe(false);
     expect(await s.service.send(request('Again', { chatId }))).toHaveProperty('error');
@@ -339,7 +378,7 @@ describe('status', () => {
   });
 
   test('an error when claude cannot be run', async () => {
-    const s = await setup({ locate: async () => join(FIXTURES, 'no-such-claude'), spawn });
+    const s = await setup({ locate: async () => join(FIXTURES, 'no-such-claude') });
     const status = await s.service.status();
     expect(status.state).toBe('error');
     expect(status.message).toBeTruthy();
@@ -512,7 +551,7 @@ describe('chats', () => {
 });
 
 test('a claude that cannot be started ends the turn with an error, and the next send still works', async () => {
-  const s = await setup({ locate: async () => join(FIXTURES, 'no-such-claude'), spawn });
+  const s = await setup({ locate: async () => join(FIXTURES, 'no-such-claude') });
   const first = await s.service.send(request('Hi'));
   if ('error' in first) throw new Error(first.error);
   const message = await doneOf(s, first.messageId);
@@ -559,5 +598,202 @@ describe('request checks', () => {
     for (const bad of [[1, 'm', null, false], ['c', null, null, false], ['c', 'm', 'a', false], ['c', 'm', [1], false], ['c', 'm', null, 'yes'], ['c', 'm', undefined, false]]) {
       expect(parseUndoArgs(bad)).toBeNull();
     }
+  });
+});
+
+describe('session ids', () => {
+  test('a session id that is not a UUID is never kept, so it never reaches the command line', async () => {
+    const s = await setup();
+    const first = await sendOk(s, 'odd session');
+    const message = await doneOf(s, first.messageId);
+    expect(message.error).toBeUndefined();
+    expect((await readChat(s.root, first.chatId))?.sessionId).toBeNull();
+    const second = await sendOk(s, 'Add a paragraph', { chatId: first.chatId });
+    await doneOf(s, second.messageId);
+    expect((await fakeLog(s)).argv).not.toContain('--resume');
+  });
+
+  test('a failed turn leaves the chat session as it was', async () => {
+    const s = await setup();
+    const first = await sendOk(s, 'fail auth');
+    await doneOf(s, first.messageId);
+    expect((await readChat(s.root, first.chatId))?.sessionId).toBeNull();
+
+    const second = await sendOk(s, 'Add a paragraph', { chatId: first.chatId });
+    await doneOf(s, second.messageId);
+    expect((await readChat(s.root, first.chatId))?.sessionId).toBe(SESSION_ID);
+    const third = await sendOk(s, 'fail auth', { chatId: first.chatId });
+    await doneOf(s, third.messageId);
+    expect((await readChat(s.root, first.chatId))?.sessionId).toBe(SESSION_ID);
+  });
+
+  test('a resumed session the CLI no longer has is dropped, so the next message starts fresh', async () => {
+    const s = await setup();
+    const first = await sendOk(s, 'Add a paragraph');
+    await doneOf(s, first.messageId);
+    const lost = await sendOk(s, 'lost session', { chatId: first.chatId });
+    const message = await doneOf(s, lost.messageId);
+    expect(message.error).toMatch(/No conversation found/);
+    expect((await readChat(s.root, first.chatId))?.sessionId).toBeNull();
+
+    const next = await sendOk(s, 'Add a paragraph', { chatId: first.chatId });
+    await doneOf(s, next.messageId);
+    expect((await fakeLog(s)).argv).not.toContain('--resume');
+    expect((await readChat(s.root, first.chatId))?.sessionId).toBe(SESSION_ID);
+  });
+});
+
+describe('turns that would not end', () => {
+  test('a turn ends when claude exits, even if something it started keeps its output open', async () => {
+    const s = await setup();
+    const started = Date.now();
+    const { messageId } = await sendOk(s, 'linger');
+    const message = await doneOf(s, messageId);
+    const { grandchild } = JSON.parse(await readFile(s.log, 'utf8')) as { grandchild: number };
+    s.strays.push(grandchild);
+    // The grandchild holds the output for 5 s; the turn ends about exitGraceMs after claude itself exits.
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(message).toMatchObject({ text: 'Still here.' });
+    expect(message.error).toBeUndefined();
+  });
+
+  test('stop goes on to SIGKILL when SIGINT and SIGTERM are ignored', async () => {
+    const s = await setup();
+    const { messageId } = await sendOk(s, 'deaf sleep');
+    await fakeReady(s);
+    const started = Date.now();
+    await s.service.stop();
+    const message = await doneOf(s, messageId);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(380);
+    expect(s.children[0].signalCode).toBe('SIGKILL');
+    expect(message.error).toBe('Stopped');
+  });
+
+  test('a second stop kills at once', async () => {
+    const s = await setup({ stopGraceMs: 5000 });
+    const { messageId } = await sendOk(s, 'deaf sleep');
+    await fakeReady(s);
+    const started = Date.now();
+    await s.service.stop();
+    await s.service.stop();
+    const message = await doneOf(s, messageId);
+    expect(Date.now() - started).toBeLessThan(4000);
+    expect(s.children[0].signalCode).toBe('SIGKILL');
+    expect(message.error).toBe('Stopped');
+  });
+
+  test('close kills a child that ignores SIGTERM', async () => {
+    const s = await setup();
+    await sendOk(s, 'deaf sleep');
+    await fakeReady(s);
+    s.service.close();
+    await exited(s.children[0]);
+    expect(s.children[0].signalCode).toBe('SIGKILL');
+  });
+});
+
+test('text from separate blocks is kept apart', async () => {
+  const s = await setup();
+  const { messageId } = await sendOk(s, 'two parts');
+  const message = await doneOf(s, messageId);
+  expect(message.text).toBe("I'll read the page.\n\nDone.");
+  expect(s.events.flatMap((e) => (e.kind === 'text' ? [e.text] : []))).toEqual(["I'll read the page.", '\n\n', 'Done.']);
+});
+
+test('a claude that went away is looked for again', async () => {
+  let where = join(FIXTURES, 'no-such-claude');
+  let looked = 0;
+  const s = await setup({
+    locate: async () => {
+      looked++;
+      return where;
+    },
+  });
+  const first = await sendOk(s, 'Hi');
+  expect((await doneOf(s, first.messageId)).error).toMatch(/^Claude stopped unexpectedly/);
+  expect(looked).toBe(1);
+  where = FAKE;
+  const second = await sendOk(s, 'Add a paragraph');
+  expect((await doneOf(s, second.messageId)).error).toBeUndefined();
+  expect(looked).toBe(2);
+});
+
+describe("only Claude's own changes", () => {
+  test('a page another app changes during the turn is not in the reply', async () => {
+    const s = await setup();
+    const { messageId } = await sendOk(s, 'Add a paragraph while others write');
+    const message = await doneOf(s, messageId);
+    expect(message.changes?.map((c) => c.path)).toEqual(['Markets/A.json', 'Markets/A/drawing-x1.svg']);
+    expect(await readFile(join(s.root, 'Markets/B.json'), 'utf8')).toMatch(/Written by another app/);
+  });
+
+  test('a save planned before an undo is refused as stale, and the restored text stays', async () => {
+    const s = await setup();
+    const { chatId, messageId } = await sendOk(s, 'Add a paragraph');
+    await doneOf(s, messageId);
+    const seenSeq = s.deltas[s.deltas.length - 1]?.seq ?? 0;
+
+    // Hold the undo in the queue once its work is done, and queue the window's save behind it.
+    const exclusive = s.session.exclusive.bind(s.session);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let queued!: () => void;
+    const isQueued = new Promise<void>((r) => (queued = r));
+    s.session.exclusive = ((work, opts) => {
+      const held = exclusive(async () => {
+        const out = await work();
+        await gate;
+        return out;
+      }, opts);
+      queued();
+      return held;
+    }) as typeof s.session.exclusive;
+
+    const undoing = s.service.undo(chatId, messageId, ['Markets/A.json'], false);
+    await isQueued;
+    const markets = s.session.snapshot.spaces.find((sp) => sp.name === 'Markets')!;
+    const flushing = s.session.flush({
+      spaces: s.session.snapshot.spaces,
+      createdSpaces: [],
+      deletedSpaces: [],
+      journalSpaceId: null,
+      deletes: [],
+      seenSeq,
+      saves: [{ id: 'a', spaceId: markets.id, parentId: null, title: 'A', json: A_AFTER, sidecars: {} }],
+    });
+    release();
+    expect(await undoing).toEqual({ undone: ['Markets/A.json'], conflicts: [] });
+    expect((await flushing).stale).toEqual(['a']);
+    expect(await readFile(join(s.root, 'Markets/A.json'), 'utf8')).toBe(A_TEXT);
+  });
+
+  test('close mid-turn keeps what Claude changed so far, and it can be undone after reopening', async () => {
+    const s = await setup();
+    const { chatId, messageId } = await sendOk(s, 'edit then sleep');
+    await waitFor('the actions', () => actionEvents(s, messageId).length === 3);
+    // What the watcher would report: read the folder now, so the turn has seen the writes.
+    await s.session.settle();
+    const sent = s.events.length;
+    s.service.close();
+    await exited(s.children[0]);
+
+    const chat = await waitFor('the record of the closed turn', async () => {
+      const c = await readChat(s.root, chatId);
+      return c?.messages.length === 2 ? c : undefined;
+    });
+    const reply = chat.messages[1];
+    expect(reply).toMatchObject({ id: messageId, text: resultText('read-and-edit.jsonl'), error: 'Stopped: the workspace was closed' });
+    expect(reply.actions?.map(withoutId)).toEqual([
+      { verb: 'read', path: 'Markets/A.json' },
+      { verb: 'edited', path: 'Markets/A.json' },
+      { verb: 'created', path: 'Markets/A/drawing-x1.svg' },
+    ]);
+    expect(reply.changes?.map((c) => c.path)).toEqual(['Markets/A.json', 'Markets/A/drawing-x1.svg']);
+    expect(s.events.slice(sent)).toEqual([]);
+
+    const again = await reopen(s);
+    expect(await again.undo(chatId, messageId, null, false)).toEqual({ undone: ['Markets/A.json', 'Markets/A/drawing-x1.svg'], conflicts: [] });
+    expect(await readFile(join(s.root, 'Markets/A.json'), 'utf8')).toBe(A_TEXT);
+    expect(await exists(join(s.root, 'Markets/A'))).toBe(false);
   });
 });

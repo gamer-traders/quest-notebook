@@ -10,8 +10,17 @@ export const PERMISSIONS = {
   disallowedTools: ['Edit(/.quest/**)'],
 } as const;
 
-/** The claude arguments for one turn. The prompt goes last, after `--`, so text starting with '-' isn't read as an option. */
+const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A CLI session id, as the CLI makes them: a UUID. Anything else could be read as an option after `--resume`. */
+export const isSessionId = (id: unknown): id is string => typeof id === 'string' && SESSION_ID.test(id);
+
+/**
+ * The claude arguments for one turn. The prompt goes last, after `--`, so text starting with '-' isn't read as an option.
+ * A session id that isn't a UUID throws: `--resume` takes an optional value, so `--settings=…` would become an option.
+ */
 export function claudeArgs(p: { prompt: string; sessionId: string | null; guide: string }): string[] {
+  if (p.sessionId !== null && !isSessionId(p.sessionId)) throw new Error('Invalid session id');
   return [
     '-p',
     '--output-format', 'stream-json',

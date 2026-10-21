@@ -3,6 +3,7 @@ import { randomInt } from 'node:crypto';
 import type { Chat, ChatSummary } from '@shared/ipc';
 import { formatJson } from '@shared/formatJson';
 import { insideRoot, writeFileAtomic } from '../workspace/paths';
+import { isSessionId } from './command';
 
 export const CHATS_DIR = '.quest/chats';
 
@@ -17,7 +18,8 @@ function isChat(v: unknown): v is Chat {
   if (!isObject(v)) return false;
   const { id, title, created, updated, sessionId, messages } = v;
   if (![id, title, created, updated].every((s) => typeof s === 'string')) return false;
-  if (sessionId !== null && typeof sessionId !== 'string') return false;
+  // The session id goes on the CLI's command line: anything but a UUID is refused.
+  if (sessionId !== null && !isSessionId(sessionId)) return false;
   return (
     Array.isArray(messages) &&
     messages.every((m) => isObject(m) && typeof m.id === 'string' && (m.role === 'user' || m.role === 'assistant') && typeof m.text === 'string')

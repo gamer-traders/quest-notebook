@@ -3,6 +3,8 @@ import type { ChatAction } from '@shared/ipc';
 export type StreamItem =
   | { kind: 'session'; sessionId: string }
   | { kind: 'text'; text: string }
+  /** A new block of text begins: text from separate blocks shouldn't run together. */
+  | { kind: 'text-start' }
   | { kind: 'action'; action: ChatAction }
   | { kind: 'refused'; id: string; message: string }
   | { kind: 'done'; ok: boolean; error?: string; loggedOut?: boolean; refused: string[] };
@@ -76,6 +78,9 @@ export function parseStreamLine(line: string, root: string): StreamItem[] {
     }
     case 'stream_event': {
       const inner = event.event;
+      if (isObject(inner) && inner.type === 'content_block_start') {
+        return isObject(inner.content_block) && inner.content_block.type === 'text' ? [{ kind: 'text-start' }] : [];
+      }
       if (!isObject(inner) || inner.type !== 'content_block_delta' || !isObject(inner.delta)) return [];
       const text = str(inner.delta.text);
       return inner.delta.type === 'text_delta' && text !== undefined ? [{ kind: 'text', text }] : [];

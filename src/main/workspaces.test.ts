@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
 import type { ClaudeEvent, SendRequest } from '@shared/ipc';
+import { readChat } from './claude/chats';
 import { Workspaces } from './workspaces';
 
 const FAKE = join(__dirname, 'claude/__fixtures__/fake-claude.mjs');
@@ -104,15 +105,20 @@ test('each open workspace has its own claude service, and none without a workspa
   expect(s.workspaces.claude).toBeNull();
 });
 
-test('switching workspace mid-turn stops claude, and nothing more is written or sent (Review Focus 2)', async () => {
+test('switching workspace mid-turn stops claude, records the reply in the old workspace only, and sends nothing more (Review Focus 2)', async () => {
   const s = await setup();
   const { chatId, messageId } = await startSleeping(s);
   const chatFile = join(s.first, '.quest/chats', `${chatId}.json`);
-  const before = await readFile(chatFile, 'utf8');
   const sent = s.events.length;
 
   expect((await s.workspaces.open(s.second)).ok).toBe(true);
   await exited(s.children[0]);
+  const old = await waitFor('the record in the old workspace', async () => {
+    const chat = await readChat(s.first, chatId);
+    return chat?.messages.length === 2 ? chat : undefined;
+  });
+  expect(old.messages[1]).toMatchObject({ id: messageId, role: 'assistant', error: 'Stopped: the workspace was closed' });
+  const before = await readFile(chatFile, 'utf8');
   await sleep(300);
 
   expect(await readFile(chatFile, 'utf8')).toBe(before);
@@ -136,11 +142,15 @@ test('closing the window stops the turn, which ends as Stopped', async () => {
   expect(s.children[0].exitCode).toBe(130);
 });
 
-test('closing the app mid-turn kills claude without reporting anything', async () => {
+test('closing the app mid-turn kills claude without reporting anything, and closing again is harmless', async () => {
   const s = await setup();
   const { messageId } = await startSleeping(s);
+  s.workspaces.close();
   s.workspaces.close();
   await exited(s.children[0]);
   await sleep(300);
   expect(s.events.some((e) => e.kind === 'done' && e.messageId === messageId)).toBe(false);
+  expect(s.workspaces.claude).toBeNull();
+  expect(s.workspaces.session).toBeNull();
+  s.workspaces.close();
 });

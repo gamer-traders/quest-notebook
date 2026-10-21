@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { buildPrompt, claudeArgs, claudeEnv, PERMISSIONS } from './command';
+import { buildPrompt, claudeArgs, claudeEnv, isSessionId, PERMISSIONS } from './command';
 
 test('the permission constant matches permissions.json', () => {
   const json = JSON.parse(readFileSync(join(__dirname, 'permissions.json'), 'utf8'));
@@ -13,10 +13,12 @@ test('the permission constant matches permissions.json', () => {
 
 const args = (over: Partial<Parameters<typeof claudeArgs>[0]> = {}) => claudeArgs({ prompt: 'hi', sessionId: null, guide: 'GUIDE', ...over });
 
+const SESSION = 'e607f87c-c213-4764-b30b-b92b8927eec4';
+
 test('args with a session id', () => {
-  const a = args({ sessionId: 'abc-123' });
+  const a = args({ sessionId: SESSION });
   expect(a[0]).toBe('-p');
-  expect(a.slice(a.indexOf('--resume'), a.indexOf('--resume') + 2)).toEqual(['--resume', 'abc-123']);
+  expect(a.slice(a.indexOf('--resume'), a.indexOf('--resume') + 2)).toEqual(['--resume', SESSION]);
   for (const flag of ['--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--restricted', '--strict-mcp-config', '--permission-mode', 'default']) expect(a).toContain(flag);
   expect(a[a.indexOf('--tools') + 1]).toBe('Read,Glob,Grep,Edit,Write');
   for (const rule of [...PERMISSIONS.allowedTools, ...PERMISSIONS.disallowedTools]) expect(a).toContain(rule);
@@ -26,6 +28,15 @@ test('args with a session id', () => {
 
 test('args without a session id have no --resume', () => {
   expect(args()).not.toContain('--resume');
+});
+
+test('a session id must be a UUID, so it can never be read as an option', () => {
+  expect(isSessionId(SESSION)).toBe(true);
+  expect(isSessionId(SESSION.toUpperCase())).toBe(true);
+  for (const bad of ['--settings=evil.json', '-r', '', 'abc-123', `${SESSION} `, `${SESSION}\n--bare`, `x${SESSION}`]) {
+    expect(isSessionId(bad)).toBe(false);
+    expect(() => args({ sessionId: bad })).toThrow();
+  }
 });
 
 test('allowed and denied rules follow their flag, each as its own argument', () => {

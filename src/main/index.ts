@@ -118,6 +118,11 @@ app.on('before-quit', () => {
   quitting = true;
 });
 
+// Whatever way the app quits, the claude child is stopped (closing twice is harmless).
+app.on('will-quit', () => {
+  workspaces.close();
+});
+
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin' || quitting) {
     workspaces.close();

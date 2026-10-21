@@ -49,6 +49,18 @@ describe('chats on disk', () => {
     expect(await readChat(root, 'nothere1')).toBeNull();
   });
 
+  test('a chat whose session id is not a UUID is not read', async () => {
+    const root = await tmp();
+    await writeChat(root, { ...chat('uuid0001', '2026-01-02T00:00:00.000Z'), sessionId: 'e607f87c-c213-4764-b30b-b92b8927eec4' });
+    const dir = join(root, CHATS_DIR);
+    await writeFile(join(dir, 'option01.json'), JSON.stringify({ ...chat('option01', 'x'), sessionId: '--settings=evil.json' }));
+    await writeFile(join(dir, 'number01.json'), JSON.stringify({ ...chat('number01', 'x'), sessionId: 5 }));
+    expect((await listChats(root)).map((c) => c.id)).toEqual(['uuid0001']);
+    expect(await readChat(root, 'option01')).toBeNull();
+    expect(await readChat(root, 'number01')).toBeNull();
+    expect((await readChat(root, 'uuid0001'))?.sessionId).toBe('e607f87c-c213-4764-b30b-b92b8927eec4');
+  });
+
   test('ids that could leave the folder are refused', async () => {
     const root = await tmp();
     for (const id of ['../x', 'ABCDEFGH', 'abc']) expect(await readChat(root, id)).toBeNull();

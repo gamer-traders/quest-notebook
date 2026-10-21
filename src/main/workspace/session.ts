@@ -117,11 +117,19 @@ export class WorkspaceSession {
     return this.rescan();
   }
 
-  /** Runs `work` in the queue, so no scan reads the folder half way through it. */
-  exclusive<T>(work: () => Promise<T>): Promise<T> {
+  /**
+   * Runs `work` in the queue, so no scan reads the folder half way through it. With `rescanAfter`, the folder is read
+   * again in the same turn of the queue, even if `work` fails: what it wrote is reported before anything queued behind
+   * it runs, so a save planned before it is refused as stale.
+   */
+  exclusive<T>(work: () => Promise<T>, opts: { rescanAfter?: boolean } = {}): Promise<T> {
     return this.turn(async () => {
       if (this.closed) throw new Error('This workspace is closed');
-      return work();
+      try {
+        return await work();
+      } finally {
+        if (opts.rescanAfter) await this.rescanNow();
+      }
     });
   }
 
@@ -138,26 +146,29 @@ export class WorkspaceSession {
   }
 
   private rescan(): Promise<void> {
-    return this.turn(async () => {
-      if (this.closed) return;
-      if (!(await this.present())) return this.gone();
-      try {
-        const next = await scanWorkspace(this.root, this.known.index);
-        const delta = diffScans(this.known, next);
-        const changes = fileChanges(this.known, next);
-        this.known = knownFromScan(next);
-        this.snapshot = { ...next.snapshot, isNew: false };
-        if (delta) {
-          const seq = ++this.seq;
-          for (const page of delta.pages) this.changedAt.set(page.id, seq);
-          for (const id of delta.removed) this.changedAt.set(id, seq);
-          this.events.change({ ...delta, seq });
-        }
-        if (changes.length) this.events.fileChanges?.(changes);
-      } catch (error) {
-        console.error('Reading the workspace after a change failed:', error);
+    return this.turn(() => this.rescanNow());
+  }
+
+  /** A rescan's body, for a caller already holding the queue. */
+  private async rescanNow(): Promise<void> {
+    if (this.closed) return;
+    if (!(await this.present())) return this.gone();
+    try {
+      const next = await scanWorkspace(this.root, this.known.index);
+      const delta = diffScans(this.known, next);
+      const changes = fileChanges(this.known, next);
+      this.known = knownFromScan(next);
+      this.snapshot = { ...next.snapshot, isNew: false };
+      if (delta) {
+        const seq = ++this.seq;
+        for (const page of delta.pages) this.changedAt.set(page.id, seq);
+        for (const id of delta.removed) this.changedAt.set(id, seq);
+        this.events.change({ ...delta, seq });
       }
-    });
+      if (changes.length) this.events.fileChanges?.(changes);
+    } catch (error) {
+      console.error('Reading the workspace after a change failed:', error);
+    }
   }
 
   close(): void {

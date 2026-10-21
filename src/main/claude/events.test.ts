@@ -70,7 +70,7 @@ describe('parseStreamLine on the fixtures', () => {
     const items = fixture('resume.jsonl');
     expect(kinds(items)[0]).toBe('session');
     expect(items[0]).toEqual({ kind: 'session', sessionId: initSessionId('resume.jsonl') });
-    expect(kinds(items).filter((k) => k !== 'text')).toEqual(['session', 'done']);
+    expect(kinds(items).filter((k) => k !== 'text')).toEqual(['session', 'text-start', 'done']);
     expect(items[items.length - 1]).toMatchObject({ kind: 'done', ok: true });
     expect(joinedText(items)).toBe(resultText('resume.jsonl'));
   });
@@ -152,6 +152,26 @@ describe('parseStreamLine: actions', () => {
   it('gives nothing for the synthetic auth-failure message', () => {
     const line = JSON.stringify({ type: 'assistant', message: { model: '<synthetic>', content: [{ type: 'text', text: 'Failed to authenticate' }] }, error: 'authentication_failed', parent_tool_use_id: null });
     expect(parseStreamLine(line, '/WS')).toEqual([]);
+  });
+});
+
+describe('parseStreamLine: text blocks', () => {
+  const start = (type: string, extra: object = {}) =>
+    JSON.stringify({ type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type, text: '' } }, parent_tool_use_id: null, ...extra });
+
+  it('a text block starting gives text-start; other blocks give nothing', () => {
+    expect(parseStreamLine(start('text'), '/WS')).toEqual([{ kind: 'text-start' }]);
+    expect(parseStreamLine(start('thinking'), '/WS')).toEqual([]);
+    expect(parseStreamLine(start('tool_use'), '/WS')).toEqual([]);
+    expect(parseStreamLine(start('text', { parent_tool_use_id: 'toolu_p' }), '/WS')).toEqual([]);
+  });
+
+  it('each fixture text block is announced once, before its text', () => {
+    for (const name of ['read-and-edit.jsonl', 'denied.jsonl', 'resume.jsonl']) {
+      const k = kinds(fixture(name));
+      expect(k.filter((x) => x === 'text-start')).toHaveLength(1);
+      expect(k.indexOf('text-start')).toBeLessThan(k.indexOf('text'));
+    }
   });
 });
 
