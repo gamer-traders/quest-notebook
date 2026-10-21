@@ -1,0 +1,7 @@
+{
+  "_note": "Not a --settings file. These are the CLI flags verified (claude 2.1.288) to confine Claude to page files and drawing SVGs. Pass: --permission-mode <permissionMode> --allowedTools <allowedTools...> --disallowedTools <disallowedTools...> --restricted --tools Read,Glob,Grep,Edit,Write. A leading '/' in a rule given on the command line is relative to the working directory (the workspace root). Do NOT move these rules into a --settings file and do NOT use acceptEdits: see docs/superpowers/notes/2026-10-21-claude-cli-findings.md.",
+  "permissionMode": "default",
+  "tools": ["Read", "Glob", "Grep", "Edit", "Write"],
+  "allowedTools": ["Read", "Glob", "Grep", "Edit(/*/**/*.json)", "Edit(/*/**/drawing-*.svg)"],
+  "disallowedTools": ["Edit(/.quest/**)"]
+}
