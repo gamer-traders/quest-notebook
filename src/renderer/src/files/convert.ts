@@ -295,8 +295,12 @@ function drawingFromFile(raw: Raw, rawId: string, id: string, ctx: DrawingContex
 
   // The file's strokes are the drawing. Strokes in the page join them, and never replace them.
   if (fromFile && fromFile.strokes.length > 0) {
-    const have = new Set(fromFile.strokes.map(encodedPoints));
-    const added = inline ? inline.strokes.filter((stroke) => !have.has(encodedPoints(stroke))) : [];
+    // The file's strokes are encoded only to compare: for most pages there's nothing inside them to compare with.
+    let added: Stroke[] = [];
+    if (inline) {
+      const have = new Set(fromFile.strokes.map(encodedPoints));
+      added = inline.strokes.filter((stroke) => !have.has(encodedPoints(stroke)));
+    }
     if (added.length || named !== own) ctx.toWrite.add(id);
     return { id, type: 'drawing', ...fromFile, strokes: [...fromFile.strokes, ...added] };
   }
