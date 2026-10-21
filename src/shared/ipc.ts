@@ -62,7 +62,8 @@ export interface PageSave {
   spaceId: string;
   parentId: string | null;
   title: string;
-  json: string;
+  /** The page file's text. Left out when only the page's pictures need writing, as after a change from disk. */
+  json?: string;
   /**
    * Every picture copy the page has, by file name (drawing-<id>.svg), written in the page's folder. Copies in
    * that folder no longer listed are removed.

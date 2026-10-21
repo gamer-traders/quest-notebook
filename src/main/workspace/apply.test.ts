@@ -249,3 +249,19 @@ test('a picture with an unsafe name is never written', async () => {
   expect(await list('Markets')).toEqual(['Page.json']);
   expect(await list('')).toEqual(['.quest', 'Markets']);
 });
+
+test('a save with pictures only rewrites the pictures and leaves the page file as it is', async () => {
+  const original = '{"id":"p","title":"Page","blocks":[]}';
+  await setup({ 'Markets/Page.json': original });
+  const result = await apply({ saves: [{ id: 'p', spaceId: space('Markets'), parentId: null, title: 'Page', sidecars: { 'drawing-d1.svg': '<svg>2</svg>' } }] });
+  expect(result.paths).toEqual({ p: 'Markets/Page.json' });
+  expect(await read('Markets/Page.json')).toBe(original);
+  expect(await read('Markets/Page/drawing-d1.svg')).toBe('<svg>2</svg>');
+});
+
+test('a pictures-only save for a page main has never seen does nothing', async () => {
+  await setup({ 'Markets/': '' });
+  const result = await apply({ saves: [{ id: 'ghost', spaceId: space('Markets'), parentId: null, title: 'Ghost', sidecars: { 'drawing-d1.svg': '<svg/>' } }] });
+  expect(result.ok).toBe(true);
+  expect(await list('Markets')).toEqual([]);
+});

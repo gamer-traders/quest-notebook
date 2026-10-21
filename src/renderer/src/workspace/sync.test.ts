@@ -24,7 +24,7 @@ test('editing a page saves that page alone', () => {
   const { batch } = plan(prev, { notebooks: edited }, baseline);
   expect(batch!.saves.map((s) => s.id)).toEqual(['n1']);
   expect(batch!.saves[0]).toMatchObject({ spaceId: 'sm', parentId: null, title: 'One' });
-  expect(JSON.parse(batch!.saves[0].json).blocks).toEqual([{ type: 'paragraph', text: 'changed' }]);
+  expect(JSON.parse(batch!.saves[0].json!).blocks).toEqual([{ type: 'paragraph', text: 'changed' }]);
   expect(batch!.deletes).toEqual([]);
   expect(batch!.spaces).toBe(spaces);
 });
@@ -42,7 +42,7 @@ test('renaming a page rewrites the pages that link to it', () => {
   const renamed = prev.notebooks.map((n) => (n.id === 'n1' ? { ...n, title: 'New title' } : n));
   const { batch } = plan(prev, { notebooks: renamed }, baseline);
   expect(batch!.saves.map((s) => s.id).sort()).toEqual(['n1', 'n2']);
-  expect(JSON.parse(batch!.saves.find((s) => s.id === 'n2')!.json).blocks[0].text).toBe('See [[New title]]');
+  expect(JSON.parse(batch!.saves.find((s) => s.id === 'n2')!.json!).blocks[0].text).toBe('See [[New title]]');
 });
 
 test('a page taking another page’s title makes links to that page name it by path', () => {
@@ -50,7 +50,7 @@ test('a page taking another page’s title makes links to that page name it by p
   const { prev, baseline } = start([nb('n1', 'Notes'), nb('n2', 'Reader', { blocks: [para([link])] }), nb('n3', 'Other', { spaceId: 'sl' })]);
   const clash = prev.notebooks.map((n) => (n.id === 'n3' ? { ...n, title: 'Notes' } : n));
   const { batch } = plan(prev, { notebooks: clash }, baseline);
-  expect(JSON.parse(batch!.saves.find((s) => s.id === 'n2')!.json).blocks[0].text).toBe('[[Markets/Notes]]');
+  expect(JSON.parse(batch!.saves.find((s) => s.id === 'n2')!.json!).blocks[0].text).toBe('[[Markets/Notes]]');
 });
 
 test('deleting pages sends their ids', () => {

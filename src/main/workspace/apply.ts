@@ -126,6 +126,8 @@ export async function applyFlush(root: string, index: ScanIndex, batch: FlushBat
   for (const save of ordered) {
     try {
       const entry = index.pages.get(save.id);
+      // Pictures alone are only redrawn for a page that's on disk.
+      if (save.json === undefined && !entry) continue;
       if (entry?.error) throw new Error('Page file is unreadable');
       const space = spaceFolder.get(save.spaceId);
       if (space === undefined) throw new Error(`The space for “${save.title}” isn't in this workspace`);
@@ -155,7 +157,7 @@ export async function applyFlush(root: string, index: ScanIndex, batch: FlushBat
         entry.path = target;
       }
 
-      if (entry?.text !== save.json) {
+      if (save.json !== undefined && entry?.text !== save.json) {
         await writeFileAtomic(abs(target), save.json);
         const info = await stat(abs(target));
         index.pages.set(save.id, { path: target, mtimeMs: info.mtimeMs, size: info.size, text: save.json });

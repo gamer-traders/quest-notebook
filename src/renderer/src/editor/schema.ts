@@ -1,5 +1,5 @@
 import { BlockNoteSchema, createHeadingBlockSpec, defaultBlockSpecs, defaultInlineContentSpecs } from '@blocknote/core';
-import { ChartBlock, PredictionBlock, TradePlanBlock } from './ItemBlocks';
+import { ChartBlock, DrawingBlock, PredictionBlock, TradePlanBlock } from './ItemBlocks';
 import { CalloutBlock } from './Callout';
 import { NotebookLink } from './NotebookLink';
 
@@ -20,6 +20,7 @@ export const schema = BlockNoteSchema.create({
     chart: ChartBlock(),
     tradePlan: TradePlanBlock(),
     prediction: PredictionBlock(),
+    drawing: DrawingBlock(),
   },
   inlineContentSpecs: {
     ...defaultInlineContentSpecs,

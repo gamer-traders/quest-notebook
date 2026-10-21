@@ -28,6 +28,7 @@ const BLOCK_LABEL: Record<string, string> = {
   chart: 'Chart',
   tradePlan: 'Trade plan',
   prediction: 'Prediction',
+  drawing: 'Drawing',
 };
 
 /** Each block's words, in page order. Charts, plans and predictions bring their pins, labels and reasons. */

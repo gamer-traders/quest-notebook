@@ -8,6 +8,7 @@ import { useStore } from '../store';
 import { ChartCellView } from '../cells/ChartCellView';
 import { PlanCellView } from '../cells/PlanCellView';
 import { CallCellView } from '../cells/CallCellView';
+import { DrawingView } from '../drawing/DrawingView';
 import { useNotebookId } from './NotebookContext';
 
 // Chart, trade plan and prediction blocks hold only an id. Their data lives in the notebook's
@@ -83,6 +84,13 @@ function CallBlockView({ blockId }: { blockId: string }) {
   return <CallCellView notebookId={notebookId} cell={data} chart={chart} />;
 }
 
+function DrawingBlockView({ blockId }: { blockId: string }) {
+  const notebookId = useNotebookId();
+  const data = useItem(blockId);
+  if (data?.type !== 'drawing') return <Missing />;
+  return <DrawingView notebookId={notebookId} drawing={data} />;
+}
+
 /** What a copied block becomes outside the app: one line of text instead of a dead chart. */
 function ItemSummary({ blockId, label }: { blockId: string; label: string }) {
   const data = useItem(blockId);
@@ -123,5 +131,17 @@ export const PredictionBlock = createReactBlockSpec(
       </ItemFrame>
     ),
     toExternalHTML: ({ block }) => <ItemSummary blockId={block.id} label="Prediction" />,
+  },
+);
+
+export const DrawingBlock = createReactBlockSpec(
+  { type: 'drawing', propSchema: itemProps, content: 'none' },
+  {
+    render: ({ block }) => (
+      <ItemFrame kind="drawing">
+        <DrawingBlockView blockId={block.id} />
+      </ItemFrame>
+    ),
+    toExternalHTML: ({ block }) => <ItemSummary blockId={block.id} label="Drawing" />,
   },
 );

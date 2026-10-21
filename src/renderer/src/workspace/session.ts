@@ -57,6 +57,10 @@ export function applyDisk(delta: DiskDelta): void {
   sync.applyFromDisk(() => useStore.getState().applyDiskDelta(filtered), delta.seq);
   // Pages renamed through their file name, or missing fields, are written back whole.
   if (repaired.size) sync.markDirty(repaired);
+  // Drawings changed on disk get their pictures redrawn.
+  const after = new Map(useStore.getState().notebooks.map((n) => [n.id, n]));
+  const drawn = filtered.pages.filter((p) => Object.values(after.get(p.id)?.items ?? {}).some((i) => i.type === 'drawing')).map((p) => p.id);
+  if (drawn.length) sync.redrawPictures(drawn);
 
   // A page being edited keeps its edit, but goes where its file went, so the edit is saved there.
   const moved = new Map(delta.pages.filter((p) => pending.has(p.id) && p.error === undefined).map((p) => [p.id, p]));

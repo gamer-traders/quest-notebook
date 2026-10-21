@@ -149,6 +149,8 @@ export interface SyncHandle {
   applyFromDisk(update: () => void, seq?: number): void;
   /** Pages to write back even if nothing in them changes, such as files that were missing fields. */
   markDirty(ids: Iterable<string>): void;
+  /** Pages whose drawings changed on disk: their pictures are redrawn, and the page files left as they are. */
+  redrawPictures(ids: Iterable<string>): void;
   /** Pages with edits not yet sent to disk. An outside change to one of them loses to the edit. */
   pendingIds(): Set<string>;
   stop(): void;
@@ -242,13 +244,32 @@ export function startSync<S extends SyncedState>(api: QuestApi['workspace'], sto
     prev = next;
     baseline = planned.baseline;
     dirty = new Set();
-    if (!planned.batch) return;
-    inFlight = send(planned.batch);
+    const batch = withPictures(planned.batch, next);
+    pictures = new Set();
+    if (!batch) return;
+    inFlight = send(batch);
     try {
       await inFlight;
     } finally {
       inFlight = null;
     }
+  }
+
+  let pictures = new Set<string>();
+
+  /** Adds a pictures-only save for each page waiting for its pictures, unless the batch saves that page anyway. */
+  function withPictures(batch: FlushBatch | null, next: SyncSlice): FlushBatch | null {
+    const byId = new Map(next.notebooks.map((n) => [n.id, n]));
+    const saving = new Set(batch?.saves.map((s) => s.id) ?? []);
+    const extra: PageSave[] = [];
+    for (const id of pictures) {
+      const nb = byId.get(id);
+      if (!nb || nb.loadError || saving.has(id)) continue;
+      extra.push({ id, spaceId: nb.spaceId, parentId: nb.parentId, title: nb.title, sidecars: sidecarsFor(nb) });
+    }
+    if (!extra.length) return batch;
+    const base = batch ?? { spaces: next.spaces, createdSpaces: [], deletedSpaces: [], journalSpaceId: next.journalSpaceId, saves: [], deletes: [] };
+    return { ...base, saves: [...base.saves, ...extra] };
   }
 
   const unsubscribe = store.subscribe((s, old) => {
@@ -313,6 +334,11 @@ export function startSync<S extends SyncedState>(api: QuestApi['workspace'], sto
         baseline.delete(id);
       }
       if (dirty.size) schedule();
+    },
+
+    redrawPictures(ids) {
+      for (const id of ids) pictures.add(id);
+      if (pictures.size) schedule();
     },
 
     pendingIds() {

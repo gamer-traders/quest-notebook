@@ -66,7 +66,7 @@ test('Trade plan after some words goes below them, with the id of its data', () 
 test('the menu has the page blocks and ours, and no emoji or blocks a page leaves out', () => {
   open([{ type: 'paragraph' }]);
   const titles = pageSlashItems(editor, 'n1').map((i) => i.title);
-  expect(titles.slice(0, 3)).toEqual(['Chart', 'Trade plan', 'Prediction']);
+  expect(titles.slice(0, 4)).toEqual(['Chart', 'Trade plan', 'Prediction', 'Drawing']);
   expect(titles).toContain('Callout');
   expect(titles).toContain('Heading 3');
   expect(titles).not.toContain('Heading 4');

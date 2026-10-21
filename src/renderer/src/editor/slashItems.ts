@@ -6,6 +6,7 @@ import { ITEM_BLOCK_FOR, type PageBlock } from '../page/blockTypes';
 import { chartBeforeBlock } from '../page/blocks';
 import { newItem } from '../lib/cells';
 import { useStore } from '../store';
+import { usePen } from '../drawing/penSettings';
 import { LINK_TRIGGER } from './inlineRules';
 import type { PageEditor } from './schema';
 
@@ -21,20 +22,21 @@ const ICONS = {
   chart: icon('M7 3v4M5 7h4v8H5zM7 15v6M17 3v3M15 6h4v7h-4zM17 13v8'),
   plan: icon('M12 4a8 8 0 1 0 0 16a8 8 0 1 0 0-16zM12 2v5M12 17v5M2 12h5M17 12h5'),
   call: icon('M4 17l6-6 4 4 6-7M15 8h5v5'),
+  drawing: icon('M4 20l4-1 10-10-3-3L5 16zM14 7l3 3M14 20c2-2 4-1 6-3'),
   callout: icon('M4 5h16v11H10l-4 3.5V16H4zM8 9.5h8M8 12.5h5'),
   link: icon('M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1'),
 };
 
-const ITEM_GROUP = 'Charts and trades';
+const ITEM_GROUP = 'Charts, trades and drawings';
 
 /** Files a new chart, plan or prediction under the notebook, then puts its block at the caret. */
-function insertItem(editor: PageEditor, notebookId: string, kind: Exclude<keyof typeof ITEM_BLOCK_FOR, 'drawing'>) {
+function insertItem(editor: PageEditor, notebookId: string, kind: keyof typeof ITEM_BLOCK_FOR) {
   const { notebooks, addItem } = useStore.getState();
   const nb = notebooks.find((n) => n.id === notebookId);
   if (!nb) return;
   // The editor's own blocks, as the store only gets them a moment after typing stops.
   const page = { ...nb, blocks: editor.document as unknown as PageBlock[] };
-  const item = newItem(kind, chartBeforeBlock(page, editor.getTextCursorPosition().block.id));
+  const item = newItem(kind, chartBeforeBlock(page, editor.getTextCursorPosition().block.id), usePen.getState().background);
   addItem(notebookId, item);
 
   editor.transact((tr) => {
@@ -73,6 +75,14 @@ export function pageSlashItems(editor: PageEditor, notebookId: string): DefaultR
       group: ITEM_GROUP,
       icon: ICONS.call,
       onItemClick: () => insertItem(editor, notebookId, 'call'),
+    },
+    {
+      title: 'Drawing',
+      subtext: 'Handwriting and sketches, with pen pressure',
+      aliases: ['drawing', 'draw', 'sketch', 'ink', 'pen', 'handwriting', 'whiteboard'],
+      group: ITEM_GROUP,
+      icon: ICONS.drawing,
+      onItemClick: () => insertItem(editor, notebookId, 'drawing'),
     },
   ];
 

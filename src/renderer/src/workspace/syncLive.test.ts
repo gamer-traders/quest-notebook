@@ -85,7 +85,7 @@ test('edits are batched a moment after the last one', async () => {
   expect(batches).toHaveLength(0);
   await vi.advanceTimersByTimeAsync(10);
   expect(batches).toHaveLength(1);
-  expect(JSON.parse(batches[0].saves[0].json).title).toBe('A12');
+  expect(JSON.parse(batches[0].saves[0].json!).title).toBe('A12');
 });
 
 test('a failed save shows the error and is tried again', async () => {
@@ -115,7 +115,7 @@ test('a page marked dirty after a change from disk is written back, even though 
   await sync.flush();
   expect(batches).toHaveLength(1);
   expect(batches[0].saves.map((s) => s.id)).toEqual(['b']);
-  expect(JSON.parse(batches[0].saves[0].json)).toMatchObject({ id: 'b', title: 'B', position: 0, created: expect.any(String), updated: expect.any(String) });
+  expect(JSON.parse(batches[0].saves[0].json!)).toMatchObject({ id: 'b', title: 'B', position: 0, created: expect.any(String), updated: expect.any(String) });
 });
 
 test('pages missing fields when the workspace loads are written back without waiting for an edit', async () => {

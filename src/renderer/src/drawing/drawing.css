@@ -1,0 +1,175 @@
+/*
+  Drawings: ink on the page's own paper. Pens draw in each colour's strong ink, the highlighter in its
+  see-through tint under the ink, as chart marks do.
+*/
+
+.drawing {
+  display: grid;
+  gap: 8px;
+  outline: none;
+}
+
+.drawing-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.drawing-toolbar .segmented button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+}
+
+.drawing-sizes .size-dot {
+  display: block;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.drawing-sizes .size-0 { width: 4px; height: 4px; }
+.drawing-sizes .size-1 { width: 7px; height: 7px; }
+.drawing-sizes .size-2 { width: 11px; height: 11px; }
+
+.drawing-colors {
+  display: flex;
+  gap: 4px;
+}
+
+.drawing-colors .swatch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  box-shadow: inset 0 0 0 1px var(--rule-strong);
+}
+
+.drawing-colors .swatch[aria-pressed='true'] {
+  border-color: var(--focus);
+}
+
+.swatch-ink { background: var(--ink); }
+.swatch-yellow { background: var(--mark-solid); }
+.swatch-blue { background: var(--mark-blue-ink); }
+.swatch-green { background: var(--mark-green-ink); }
+.swatch-red { background: var(--mark-red-ink); }
+.swatch-purple { background: var(--mark-purple-ink); }
+.swatch-gray { background: var(--mark-gray-ink); }
+
+.drawing-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.drawing-actions button {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* The canvas: as wide as the block, as tall as the drawing, and the pen owns every touch on it. */
+.drawing-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  touch-action: none;
+  user-select: none;
+  cursor: crosshair;
+}
+
+.drawing-canvas.tool-eraser {
+  cursor: none;
+}
+
+.drawing-rule {
+  fill: none;
+  stroke: var(--rule);
+  stroke-width: 1;
+}
+
+.drawing-eraser {
+  fill: color-mix(in srgb, var(--sheet) 60%, transparent);
+  stroke: var(--pencil);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  pointer-events: none;
+}
+
+.ink-ink { fill: var(--ink); }
+.ink-yellow { fill: var(--mark-yellow-ink); }
+.ink-blue { fill: var(--mark-blue-ink); }
+.ink-green { fill: var(--mark-green-ink); }
+.ink-red { fill: var(--mark-red-ink); }
+.ink-purple { fill: var(--mark-purple-ink); }
+.ink-gray { fill: var(--mark-gray-ink); }
+
+.drawing-ink .tool-pencil { opacity: 0.85; }
+
+.hl-ink { fill: var(--hatch); }
+.hl-yellow { fill: var(--mark-yellow); }
+.hl-blue { fill: var(--mark-blue); }
+.hl-green { fill: var(--mark-green); }
+.hl-red { fill: var(--mark-red); }
+.hl-purple { fill: var(--mark-purple); }
+.hl-gray { fill: var(--mark-gray); }
+
+.drawing-more {
+  justify-self: start;
+  font-size: 13px;
+}
+
+.drawing-placeholder {
+  display: grid;
+  place-items: center;
+  min-height: 120px;
+  border: 1px dashed var(--rule-strong);
+  border-radius: var(--radius);
+  color: var(--pencil);
+}
+
+/* Full screen: the whole screen is paper, with the tools along the top. */
+.drawing-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 20px;
+  background: var(--paper);
+  font-family: var(--ui);
+  font-size: var(--ui-size);
+  color: var(--ink);
+  outline: none;
+}
+
+.drawing-fullscreen-sheet {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  justify-items: center;
+  gap: 8px;
+}
+
+.drawing-fullscreen-sheet .drawing-canvas {
+  width: min(100%, 1600px);
+}
+
+.drawing-fullscreen-sheet .drawing-more {
+  justify-self: center;
+}
+
+/* Every drawing tool makes marks, the pen included, so all wear the highlighter when chosen. */
+.drawing-toolbar .segmented.tools button[aria-pressed='true']:first-child {
+  background: var(--mark-solid);
+  color: #17202a;
+}

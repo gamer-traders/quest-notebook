@@ -52,7 +52,7 @@ test('saving before the window closes takes in words still waiting in the editor
   try {
     await flushWorkspace();
     expect(batches).toHaveLength(1);
-    expect(textOf(batches[0].saves[0].json)).toBe('last words');
+    expect(textOf(batches[0].saves[0].json!)).toBe('last words');
   } finally {
     stop();
   }
@@ -77,4 +77,13 @@ test('a page only waiting to have missing fields written back still takes an out
   applyDisk({ seq: 2, spaces: snapshot.spaces, journalSpaceId: null, pages: [{ ...snapshot.pages[1], file: { id: 'b', title: 'B', blocks: [{ type: 'paragraph', text: 'v2' }] } }], removed: [] });
   const b = useStore.getState().notebooks.find((n) => n.id === 'b')!;
   expect((b.blocks[0].content as { text: string }[])[0].text).toBe('v2');
+});
+
+test('a drawing changed on disk gets its picture redrawn, without the page file being rewritten', async () => {
+  const drawing = { type: 'drawing', id: 'd1', height: 400, background: 'blank', strokes: [{ tool: 'pen', color: 'ink', size: 3, pressure: true, points: '10,10,0.5 90,90,0.5' }] };
+  applyDisk({ seq: 1, spaces: snapshot.spaces, journalSpaceId: null, pages: [{ ...snapshot.pages[1], file: { ...file('b', 'B', 'bee'), blocks: [drawing] } }], removed: [] });
+  await flushWorkspace();
+  const save = batches.flatMap((b) => b.saves).find((s) => s.id === 'b')!;
+  expect(save.json).toBeUndefined();
+  expect(Object.keys(save.sidecars)).toEqual(['drawing-d1.svg']);
 });
