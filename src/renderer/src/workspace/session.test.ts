@@ -79,24 +79,24 @@ test('a page only waiting to have missing fields written back still takes an out
   expect((b.blocks[0].content as { text: string }[])[0].text).toBe('v2');
 });
 
-test('a drawing changed on disk gets its picture redrawn, without the page file being rewritten', async () => {
-  const drawing = { type: 'drawing', id: 'd1', height: 400, background: 'blank', strokes: [{ tool: 'pen', color: 'ink', size: 3, pressure: true, points: '10,10,0.5 90,90,0.5' }] };
-  applyDisk({ seq: 1, spaces: snapshot.spaces, journalSpaceId: null, pages: [{ ...snapshot.pages[1], file: { ...file('b', 'B', 'bee'), blocks: [drawing] } }], removed: [] });
+test('a drawing file written by hand is rewritten in the app’s form, and the page file left as it is', async () => {
+  const handmade = '<svg viewBox="0 0 1000 300"><path data-points="10,10 90,90,0.8"/></svg>';
+  const page = { ...file('b', 'B', 'bee'), blocks: [{ type: 'drawing', id: 'd1', file: 'drawing-d1.svg' }] };
+  applyDisk({ seq: 1, spaces: snapshot.spaces, journalSpaceId: null, pages: [{ ...snapshot.pages[1], file: page, drawings: { 'drawing-d1.svg': handmade } }], removed: [] });
   await flushWorkspace();
   const save = batches.flatMap((b) => b.saves).find((s) => s.id === 'b')!;
   expect(save.json).toBeUndefined();
-  expect(Object.keys(save.sidecars)).toEqual(['drawing-d1.svg']);
+  expect(save.sidecars['drawing-d1.svg']).toContain('data-points="10,10,0.5 90,90,0.8"');
+  expect(save.sidecars['drawing-d1.svg']).toContain(' d="M');
 });
 
-test('a page whose last drawing was removed on disk gets its picture removed', async () => {
-  const drawing = { type: 'drawing', id: 'd1', height: 400, background: 'blank', strokes: [{ tool: 'pen', color: 'ink', size: 3, pressure: true, points: '10,10,0.5 90,90,0.5' }] };
-  applyDisk({ seq: 1, spaces: snapshot.spaces, journalSpaceId: null, pages: [{ ...snapshot.pages[1], file: { ...file('b', 'B', 'bee'), blocks: [drawing] } }], removed: [] });
+test('a drawing file whose block was removed on disk is left alone', async () => {
+  const page = { ...file('b', 'B', 'bee'), blocks: [{ type: 'drawing', id: 'd1', file: 'drawing-d1.svg' }] };
+  const svg = '<svg viewBox="0 0 1000 400"><path data-points="10,10 90,90,0.8"/></svg>';
+  applyDisk({ seq: 1, spaces: snapshot.spaces, journalSpaceId: null, pages: [{ ...snapshot.pages[1], file: page, drawings: { 'drawing-d1.svg': svg } }], removed: [] });
   await flushWorkspace();
   batches = [];
-  applyDisk({ seq: 2, spaces: snapshot.spaces, journalSpaceId: null, pages: [{ ...snapshot.pages[1], file: file('b', 'B', 'no drawing now') }], removed: [] });
+  applyDisk({ seq: 2, spaces: snapshot.spaces, journalSpaceId: null, pages: [{ ...snapshot.pages[1], file: file('b', 'B', 'no drawing now'), drawings: { 'drawing-d1.svg': svg } }], removed: [] });
   await flushWorkspace();
-  const save = batches.flatMap((b) => b.saves).find((s) => s.id === 'b')!;
-  expect(save).toBeDefined();
-  expect(save.json).toBeUndefined();
-  expect(save.sidecars).toEqual({});
+  expect(batches.flatMap((b) => b.saves).filter((s) => s.id === 'b')).toEqual([]);
 });

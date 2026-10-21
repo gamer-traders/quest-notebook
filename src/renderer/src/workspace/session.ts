@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import type { DiskDelta, OpenResult, WorkspaceSnapshot } from '@shared/ipc';
-import type { Notebook } from '../types';
 import { useStore } from '../store';
 import { seedFor } from '../lib/seed';
 import { childrenOf } from '../page/tree';
@@ -19,7 +18,7 @@ export function startWorkspace(snapshot: WorkspaceSnapshot): void {
   useSaveStatus.setState({ error: null });
   const loaded = snapshotToState(snapshot);
   useStore.getState().loadWorkspace(snapshot.root, snapshot.name, loaded);
-  sync = startSync(window.quest.workspace, useStore, loaded.repaired);
+  sync = startSync(window.quest.workspace, useStore, loaded.repaired, loaded.drawingsToWrite);
 }
 
 /** Stops keeping a workspace in step, after sending what it hasn't yet. */
@@ -54,16 +53,12 @@ export function applyDisk(delta: DiskDelta): void {
     pages: delta.pages.filter((p) => !pending.has(p.id)),
     removed: delta.removed.filter((id) => !pending.has(id)),
   };
-  const { repaired } = deltaToNotebooks(filtered, current);
+  const { repaired, drawingsToWrite } = deltaToNotebooks(filtered, current);
   sync.applyFromDisk(() => useStore.getState().applyDiskDelta(filtered), delta.seq);
   // Pages renamed through their file name, or missing fields, are written back whole.
   if (repaired.size) sync.markDirty(repaired);
-  // Drawings changed on disk get their pictures redrawn, and a page whose drawings went has its pictures removed.
-  const hasDrawing = (nb: Notebook | undefined) => Object.values(nb?.items ?? {}).some((i) => i.type === 'drawing');
-  const before = new Map(current.map((n) => [n.id, n]));
-  const after = new Map(useStore.getState().notebooks.map((n) => [n.id, n]));
-  const drawn = filtered.pages.filter((p) => hasDrawing(after.get(p.id)) || hasDrawing(before.get(p.id))).map((p) => p.id);
-  if (drawn.length) sync.redrawPictures(drawn);
+  // Drawing files written by hand, or missing, are written in the app's form.
+  for (const [pageId, ids] of drawingsToWrite) sync.writeDrawings(pageId, ids);
 
   // A page being edited keeps its edit, but goes where its file went, so the edit is saved there.
   const moved = new Map(delta.pages.filter((p) => pending.has(p.id) && p.error === undefined).map((p) => [p.id, p]));

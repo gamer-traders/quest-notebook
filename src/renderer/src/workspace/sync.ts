@@ -5,6 +5,7 @@ import { SIDECAR_NAME, type FlushBatch, type PageSave, type QuestApi, type UiSta
 import type { DrawingCell, Notebook, Space } from '../types';
 import { flattenBlocks } from '../page/blocks';
 import { drawingToSvg } from '../drawing/svg';
+import { drawingFileName } from '../drawing/model';
 import { displayTitle } from '../page/tree';
 import { pageToFile } from '../files/convert';
 import { linkWriter, linksTo } from '../files/links';
@@ -16,11 +17,15 @@ export interface SyncSlice {
   journalSpaceId: string | null;
 }
 
-/** What was last sent for a page: its file text and where it sits. A page is saved when either differs. */
+/**
+ * What was last sent for a page: its file text, where it sits, and the drawings on disk as they were sent. A page
+ * is saved when its text or place differs; a drawing is sent when it isn't the one on disk.
+ */
 interface Sent {
   json: string;
   spaceId: string;
   parentId: string | null;
+  drawings: Map<string, DrawingCell>;
 }
 
 export type Baseline = Map<string, Sent>;
@@ -30,36 +35,49 @@ export const useSaveStatus = create<{ error: string | null }>(() => ({ error: nu
 
 const serialize = (nb: Notebook, write: ReturnType<typeof linkWriter>) => formatJson(pageToFile(nb, write));
 
-/** What's on disk for these pages, as far as the window knows. Pages in `unsaved` are left out, so they're saved. */
-export function baselineFor(slice: SyncSlice, unsaved: Set<string>): Baseline {
+/**
+ * What's on disk for these pages, as far as the window knows. Pages in `unsaved` are left out, so they're saved,
+ * and so are drawings in `drawingsToWrite`, by page.
+ */
+export function baselineFor(slice: SyncSlice, unsaved: Set<string>, drawingsToWrite: Map<string, Set<string>> = new Map()): Baseline {
   const write = linkWriter(slice.notebooks, slice.spaces);
   const baseline: Baseline = new Map();
   for (const nb of slice.notebooks) {
     if (nb.loadError || unsaved.has(nb.id)) continue;
-    baseline.set(nb.id, { json: serialize(nb, write), spaceId: nb.spaceId, parentId: nb.parentId });
+    const drawings = drawingsOf(nb);
+    for (const id of drawingsToWrite.get(nb.id) ?? []) drawings.delete(id);
+    baseline.set(nb.id, { json: serialize(nb, write), spaceId: nb.spaceId, parentId: nb.parentId, drawings });
   }
   return baseline;
 }
 
-// A drawing's picture is made once per version of it: drawings change by being replaced, so the object is the key.
-const pictures = new WeakMap<DrawingCell, string>();
+// A drawing's file is made once per version of it: drawings change by being replaced, so the object is the key.
+const svgs = new WeakMap<DrawingCell, string>();
+const svgOf = (drawing: DrawingCell) => {
+  let svg = svgs.get(drawing);
+  if (svg === undefined) {
+    svg = drawingToSvg(drawing);
+    svgs.set(drawing, svg);
+  }
+  return svg;
+};
 
-/** The picture copies a page's drawings get beside it, by file name. Drawings whose id can't be a file name get none. */
-export function sidecarsFor(nb: Notebook): Record<string, string> {
-  const out: Record<string, string> = {};
+/** The page's drawings, by id. Drawings whose id can't be a file name are left out: they get no file. */
+function drawingsOf(nb: Notebook): Map<string, DrawingCell> {
+  const out = new Map<string, DrawingCell>();
   for (const block of flattenBlocks(nb.blocks)) {
     const item = nb.items[block.id];
-    if (block.type !== 'drawing' || item?.type !== 'drawing') continue;
-    const name = `drawing-${item.id}.svg`;
-    if (!SIDECAR_NAME.test(name)) continue;
-    let svg = pictures.get(item);
-    if (svg === undefined) {
-      svg = drawingToSvg(item);
-      pictures.set(item, svg);
-    }
-    out[name] = svg;
+    if (block.type === 'drawing' && item?.type === 'drawing' && SIDECAR_NAME.test(drawingFileName(item.id))) out.set(item.id, item);
   }
   return out;
+}
+
+/** The drawing files to write, those that aren't on disk as they are now, and the files of drawings that went. */
+function drawingChanges(drawings: Map<string, DrawingCell>, onDisk: Map<string, DrawingCell> | undefined) {
+  const sidecars: Record<string, string> = {};
+  for (const [id, drawing] of drawings) if (onDisk?.get(id) !== drawing) sidecars[drawingFileName(id)] = svgOf(drawing);
+  const removed = [...(onDisk?.keys() ?? [])].filter((id) => !drawings.has(id)).map(drawingFileName);
+  return { sidecars, removed };
 }
 
 const titleKey = (nb: Notebook) => displayTitle(nb.title).trim().toLowerCase();
@@ -112,9 +130,21 @@ export function planFlush(prev: SyncSlice, next: SyncSlice, baseline: Baseline, 
     if (!nb || nb.loadError) continue;
     const json = serialize(nb, write);
     const sent = out.get(id);
-    if (sent && sent.json === json && sent.spaceId === nb.spaceId && sent.parentId === nb.parentId) continue;
-    saves.push({ id, spaceId: nb.spaceId, parentId: nb.parentId, title: nb.title, json, sidecars: sidecarsFor(nb) });
-    out.set(id, { json, spaceId: nb.spaceId, parentId: nb.parentId });
+    const drawings = drawingsOf(nb);
+    const { sidecars, removed } = drawingChanges(drawings, sent?.drawings);
+    const pageChanged = !sent || sent.json !== json || sent.spaceId !== nb.spaceId || sent.parentId !== nb.parentId;
+    if (!pageChanged && !Object.keys(sidecars).length && !removed.length) continue;
+    // A drawing changed alone goes without the page file, which hasn't changed.
+    saves.push({
+      id,
+      spaceId: nb.spaceId,
+      parentId: nb.parentId,
+      title: nb.title,
+      ...(pageChanged ? { json } : {}),
+      sidecars,
+      ...(removed.length ? { removedSidecars: removed } : {}),
+    });
+    out.set(id, { json, spaceId: nb.spaceId, parentId: nb.parentId, drawings });
   }
   for (const id of deletes) out.delete(id);
 
@@ -149,8 +179,8 @@ export interface SyncHandle {
   applyFromDisk(update: () => void, seq?: number): void;
   /** Pages to write back even if nothing in them changes, such as files that were missing fields. */
   markDirty(ids: Iterable<string>): void;
-  /** Pages whose drawings changed on disk: their pictures are redrawn, and the page files left as they are. */
-  redrawPictures(ids: Iterable<string>): void;
+  /** Drawings to write to their files, by page, such as drawing files written by hand. The page files are left as they are. */
+  writeDrawings(pageId: string, drawingIds: Iterable<string>): void;
   /** Pages with edits not yet sent to disk. An outside change to one of them loses to the edit. */
   pendingIds(): Set<string>;
   stop(): void;
@@ -173,12 +203,17 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
  * one, with only the pages whose files change. What the window shows (open page, expanded rows) is saved
  * separately and less often.
  */
-export function startSync<S extends SyncedState>(api: QuestApi['workspace'], store: UseBoundStore<StoreApi<S>>, unsaved: Set<string>): SyncHandle {
+export function startSync<S extends SyncedState>(
+  api: QuestApi['workspace'],
+  store: UseBoundStore<StoreApi<S>>,
+  unsaved: Set<string>,
+  drawingsToWrite: Map<string, Set<string>> = new Map(),
+): SyncHandle {
   // Everything this sync sends is for the workspace open when it started.
   const root = store.getState().workspace?.root;
   let prev = slice(store.getState());
-  let baseline = baselineFor(prev, unsaved);
-  let dirty = new Set(unsaved);
+  let baseline = baselineFor(prev, unsaved, drawingsToWrite);
+  let dirty = new Set([...unsaved, ...drawingsToWrite.keys()]);
   let fromDisk = false;
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -244,8 +279,7 @@ export function startSync<S extends SyncedState>(api: QuestApi['workspace'], sto
     prev = next;
     baseline = planned.baseline;
     dirty = new Set();
-    const batch = withPictures(planned.batch, next);
-    pictures = new Set();
+    const batch = planned.batch;
     if (!batch) return;
     inFlight = send(batch);
     try {
@@ -253,23 +287,6 @@ export function startSync<S extends SyncedState>(api: QuestApi['workspace'], sto
     } finally {
       inFlight = null;
     }
-  }
-
-  let pictures = new Set<string>();
-
-  /** Adds a pictures-only save for each page waiting for its pictures, unless the batch saves that page anyway. */
-  function withPictures(batch: FlushBatch | null, next: SyncSlice): FlushBatch | null {
-    const byId = new Map(next.notebooks.map((n) => [n.id, n]));
-    const saving = new Set(batch?.saves.map((s) => s.id) ?? []);
-    const extra: PageSave[] = [];
-    for (const id of pictures) {
-      const nb = byId.get(id);
-      if (!nb || nb.loadError || saving.has(id)) continue;
-      extra.push({ id, spaceId: nb.spaceId, parentId: nb.parentId, title: nb.title, sidecars: sidecarsFor(nb) });
-    }
-    if (!extra.length) return batch;
-    const base = batch ?? { spaces: next.spaces, createdSpaces: [], deletedSpaces: [], journalSpaceId: next.journalSpaceId, saves: [], deletes: [] };
-    return { ...base, saves: [...base.saves, ...extra] };
   }
 
   const unsubscribe = store.subscribe((s, old) => {
@@ -311,7 +328,7 @@ export function startSync<S extends SyncedState>(api: QuestApi['workspace'], sto
         if (old && old.title !== nb.title) renamed.add(nb.id);
         sent.set(nb.id, nb);
         if (nb.loadError) baseline.delete(nb.id);
-        else baseline.set(nb.id, { json: serialize(nb, write), spaceId: nb.spaceId, parentId: nb.parentId });
+        else baseline.set(nb.id, { json: serialize(nb, write), spaceId: nb.spaceId, parentId: nb.parentId, drawings: drawingsOf(nb) });
       }
       const present = new Set(after.notebooks.map((n) => n.id));
       for (const id of was.keys()) {
@@ -336,9 +353,11 @@ export function startSync<S extends SyncedState>(api: QuestApi['workspace'], sto
       if (dirty.size) schedule();
     },
 
-    redrawPictures(ids) {
-      for (const id of ids) pictures.add(id);
-      if (pictures.size) schedule();
+    writeDrawings(pageId, drawingIds) {
+      const onDisk = baseline.get(pageId)?.drawings;
+      for (const id of drawingIds) onDisk?.delete(id);
+      dirty.add(pageId);
+      schedule();
     },
 
     pendingIds() {

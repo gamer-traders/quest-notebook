@@ -1,7 +1,9 @@
 # Drawing block: design
 
 Date: 21 Oct 2026
-Status: building. The owner asked to implement straight away and adjust afterwards, so everything under "My calls" is mine.
+Status: built. The owner asked to implement straight away and adjust afterwards, so everything under "My calls" is mine.
+
+**Revised after review with the owner:** each drawing is now one SVG file in the page's folder, both the picture and the data (strokes in `data-` attributes). The page JSON only references it. This keeps page files small and readable, writes a drawing only when it changes, and removes the separate picture copy. Where this document says otherwise below, this note wins.
 
 ## Intent
 

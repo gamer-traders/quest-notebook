@@ -96,28 +96,35 @@ README.md                     this file
 
 ## Drawings
 
-A \`drawing\` block holds handwriting and sketches as ink strokes:
+A \`drawing\` block in a page points at its own SVG file, in the page's folder (the folder named like the page file):
 
 \`\`\`json
-{ "type": "drawing", "id": "d81k2m0q", "height": 420, "background": "grid",
-  "strokes": [
-    { "tool": "pen", "color": "ink", "size": 3, "pressure": true, "points": "120.5,80.2,0.42 121.3,81,0.47" }
-  ] }
+{ "type": "drawing", "id": "d81k2m0q", "file": "drawing-d81k2m0q.svg" }
 \`\`\`
 
-| field | meaning |
-|---|---|
-| \`height\` | In drawing units. A drawing is always 1000 units wide, with y going down. |
-| \`background\` | \`blank\`, \`grid\` or \`lines\`. |
-| \`tool\` | \`pen\`, \`pencil\`, \`marker\` or \`highlighter\`. |
-| \`color\` | \`ink\` (black, or white on a dark page), \`yellow\`, \`blue\`, \`green\`, \`red\`, \`purple\` or \`gray\`. |
-| \`size\` | The line's width at full pressure. |
-| \`pressure\` | \`true\` when the points carry a pen's pressure; \`false\` for mouse strokes, whose width comes from speed. |
-| \`points\` | \`x,y,pressure\` triples separated by spaces. Pressure runs from 0 to 1. |
+The SVG is the drawing: a picture anyone can open, whose paths also carry the strokes they were drawn from.
 
-- **A picture of each drawing** is written beside its page, as \`<page folder>/drawing-<id>.svg\`, where the page folder is the folder named like the page.
-  - Tools that look at images can read the handwriting there.
-  - The app writes it whenever it saves the drawing, so edit the strokes, not the SVG.
+\`\`\`xml
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 420" data-background="grid">
+  <path data-tool="pen" data-color="ink" data-size="3" data-pressure="true"
+        data-points="120.5,80.2,0.42 121.3,81,0.47" d="M120.4,79.6 Q …" fill="#17202a"/>
+</svg>
+\`\`\`
+
+| attribute | meaning |
+|---|---|
+| \`viewBox\` | \`0 0 1000 <height>\`: a drawing is always 1000 units wide, with y going down. |
+| \`data-background\` | \`blank\`, \`grid\` or \`lines\`. |
+| \`data-tool\` | \`pen\`, \`pencil\`, \`marker\` or \`highlighter\`. |
+| \`data-color\` | \`ink\` (black, or white on a dark page), \`yellow\`, \`blue\`, \`green\`, \`red\`, \`purple\` or \`gray\`. |
+| \`data-size\` | The line's width at full pressure. |
+| \`data-pressure\` | \`true\` when the points carry a pen's pressure; \`false\` for mouse strokes, whose width comes from speed. |
+| \`data-points\` | \`x,y,pressure\` triples separated by spaces. Pressure runs from 0 to 1. |
+
+- **The points are the truth.** \`d\` is the drawn outline, and the app works it out again from \`data-points\`.
+  - To add a stroke, a \`<path>\` with \`data-points\` is enough; the app fills in the rest.
+  - Paths without \`data-points\`, like the background, are only decoration.
+- **Removing a drawing in the app** moves its file to the Trash. A drawing file whose block is gone from the page is left alone.
 
 ## Text markup
 

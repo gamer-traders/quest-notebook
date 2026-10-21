@@ -13,18 +13,20 @@ export interface LoadedState {
   panelCollapsed: Record<string, true>;
   activeId: string | null;
   repaired: Set<string>;
+  /** Drawings whose files need writing in the app's form, by page. */
+  drawingsToWrite: Map<string, Set<string>>;
 }
 
 const baseName = (path: string) => (path.split('/').at(-1) ?? path).replace(/\.json$/i, '');
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /** One page from its record. A file that couldn't be read, or isn't a page, becomes a page that shows why. */
-function recordToNotebook(record: PageRecord, fallbackPosition: number): { notebook: Notebook; repaired: boolean } {
+function recordToNotebook(record: PageRecord, fallbackPosition: number): { notebook: Notebook; repaired: boolean; drawingsToWrite?: Set<string> } {
   const meta = { id: record.id, spaceId: record.spaceId, parentId: record.parentId, path: record.path, fileTimeMs: record.mtimeMs, fallbackPosition };
   if (record.error === undefined) {
     try {
-      const loaded = fileToPage(record.file, meta);
-      if (record.titleFromPath !== undefined) return { notebook: { ...loaded.notebook, title: record.titleFromPath }, repaired: true };
+      const loaded = fileToPage(record.file, meta, record.drawings ?? {});
+      if (record.titleFromPath !== undefined) return { ...loaded, notebook: { ...loaded.notebook, title: record.titleFromPath }, repaired: true };
       return loaded;
     } catch (error) {
       return { notebook: unreadable(record, fallbackPosition, message(error)), repaired: false };
@@ -65,6 +67,7 @@ function recordsToNotebooks(records: PageRecord[], positionOf: (record: PageReco
     highest.set(key, top);
   }
   const repaired = new Set<string>();
+  const drawingsToWrite = new Map<string, Set<string>>();
   const notebooks = records.map((r) => {
     const key = group(r);
     let fallback = positionOf(r);
@@ -74,9 +77,10 @@ function recordsToNotebooks(records: PageRecord[], positionOf: (record: PageReco
     }
     const loaded = recordToNotebook(r, fallback);
     if (loaded.repaired) repaired.add(r.id);
+    if (loaded.drawingsToWrite?.size) drawingsToWrite.set(r.id, loaded.drawingsToWrite);
     return loaded.notebook;
   });
-  return { notebooks, repaired };
+  return { notebooks, repaired, drawingsToWrite };
 }
 
 const flags = (ids: string[], present: Set<string>): Record<string, true> => Object.fromEntries(ids.filter((id) => present.has(id)).map((id) => [id, true as const]));
@@ -91,7 +95,7 @@ function firstPage(notebooks: Notebook[], spaces: Space[]): string | null {
 
 /** A whole workspace, as main read it, turned into the store's pages and spaces. */
 export function snapshotToState(snapshot: WorkspaceSnapshot): LoadedState {
-  const { notebooks: loaded, repaired } = recordsToNotebooks(snapshot.pages, ownPosition, () => []);
+  const { notebooks: loaded, repaired, drawingsToWrite } = recordsToNotebooks(snapshot.pages, ownPosition, () => []);
   const spaces = snapshot.spaces.map((s) => ({ ...s }));
   const notebooks = resolveLinks(loaded, spaces);
   const present = new Set(notebooks.map((n) => n.id));
@@ -104,6 +108,7 @@ export function snapshotToState(snapshot: WorkspaceSnapshot): LoadedState {
     panelCollapsed: flags(snapshot.ui.collapsedPanels, present),
     activeId: open && present.has(open) ? open : firstPage(notebooks, spaces),
     repaired,
+    drawingsToWrite,
   };
 }
 
@@ -111,10 +116,13 @@ export function snapshotToState(snapshot: WorkspaceSnapshot): LoadedState {
  * Pages changed on disk, ready to go in the store. A page that lost its position keeps the one it had;
  * a new one without a position goes after its siblings. Links are resolved later, over every page.
  */
-export function deltaToNotebooks(delta: DiskDelta, current: Notebook[]): { upserts: Notebook[]; removed: string[]; repaired: Set<string> } {
+export function deltaToNotebooks(
+  delta: DiskDelta,
+  current: Notebook[],
+): { upserts: Notebook[]; removed: string[]; repaired: Set<string>; drawingsToWrite: Map<string, Set<string>> } {
   const byId = new Map(current.map((n) => [n.id, n]));
   const positionOf = (r: PageRecord) => ownPosition(r) ?? byId.get(r.id)?.position ?? null;
   const siblingsOf = (r: PageRecord) => current.filter((n) => n.spaceId === r.spaceId && n.parentId === r.parentId && n.id !== r.id).map((n) => n.position);
-  const { notebooks, repaired } = recordsToNotebooks(delta.pages, positionOf, siblingsOf);
-  return { upserts: notebooks, removed: delta.removed, repaired };
+  const { notebooks, repaired, drawingsToWrite } = recordsToNotebooks(delta.pages, positionOf, siblingsOf);
+  return { upserts: notebooks, removed: delta.removed, repaired, drawingsToWrite };
 }

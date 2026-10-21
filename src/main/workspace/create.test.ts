@@ -73,9 +73,10 @@ test('an empty folder or an existing workspace is opened without asking', async 
   expect(await adoptFolder(root, never)).toEqual({ isNew: false });
 });
 
-test('the workspace README explains drawings and their picture copies', async () => {
+test('the workspace README explains drawings and their files', async () => {
   const root = await createWorkspace(await tmp(), 'Draw');
   const readme = await readFile(join(root, 'README.md'), 'utf8');
   expect(readme).toContain('## Drawings');
-  expect(readme).toContain('drawing-<id>.svg');
+  expect(readme).toContain('"file": "drawing-d81k2m0q.svg"');
+  expect(readme).toContain('data-points');
 });

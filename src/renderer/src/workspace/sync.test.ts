@@ -95,15 +95,40 @@ test('new and deleted spaces are named in the batch', () => {
   expect(batch).toMatchObject({ createdSpaces: ['si'], deletedSpaces: ['sl'] });
 });
 
-test('a page with a drawing is saved with a picture of it; one without, with none', () => {
-  const drawing = { id: 'd1', type: 'drawing' as const, height: 400, background: 'blank' as const, strokes: [{ id: 's', tool: 'pen' as const, color: 'ink' as const, size: 3, pressure: true, points: [10, 10, 0.5, 60, 60, 0.5] }] };
+const drawing = (id: string, x = 10) => ({ id, type: 'drawing' as const, height: 400, background: 'blank' as const, strokes: [{ id: 's', tool: 'pen' as const, color: 'ink' as const, size: 3, pressure: true, points: [x, 10, 0.5, 60, 60, 0.5] }] });
+const withDrawing = (n: Notebook, d: ReturnType<typeof drawing>): Notebook => ({ ...n, blocks: [...n.blocks, { id: d.id, type: 'drawing', props: { itemId: d.id }, children: [] }], items: { ...n.items, [d.id]: d } });
+
+test('a new drawing is saved with its file; a page without drawings sends none', () => {
   const { prev, baseline } = start([nb('n1', 'One'), nb('n2', 'Two')]);
-  const next = prev.notebooks.map((n) =>
-    n.id === 'n1' ? { ...n, blocks: [...n.blocks, { id: 'd1', type: 'drawing', props: { itemId: 'd1' }, children: [] }], items: { d1: drawing } } : { ...n, title: 'Two!' },
-  );
+  const next = prev.notebooks.map((n) => (n.id === 'n1' ? withDrawing(n, drawing('d1')) : { ...n, title: 'Two!' }));
   const { batch } = plan(prev, { notebooks: next }, baseline);
   const one = batch!.saves.find((s) => s.id === 'n1')!;
   expect(Object.keys(one.sidecars)).toEqual(['drawing-d1.svg']);
   expect(one.sidecars['drawing-d1.svg'].startsWith('<svg')).toBe(true);
+  expect(JSON.parse(one.json!).blocks.at(-1)).toEqual({ type: 'drawing', id: 'd1', file: 'drawing-d1.svg' });
   expect(batch!.saves.find((s) => s.id === 'n2')!.sidecars).toEqual({});
+});
+
+test('a drawing already on disk is not sent again when the page is', () => {
+  const { prev, baseline } = start([withDrawing(nb('n1', 'One'), drawing('d1'))]);
+  const { batch } = plan(prev, { notebooks: prev.notebooks.map((n) => ({ ...n, title: 'One!' })) }, baseline);
+  expect(batch!.saves[0].sidecars).toEqual({});
+  expect(batch!.saves[0].json).toBeDefined();
+});
+
+test('drawing a stroke sends only that drawing’s file, not the page', () => {
+  const { prev, baseline } = start([withDrawing(nb('n1', 'One'), drawing('d1'))]);
+  const next = prev.notebooks.map((n) => ({ ...n, items: { ...n.items, d1: drawing('d1', 20) } }));
+  const { batch } = plan(prev, { notebooks: next }, baseline);
+  expect(batch!.saves).toHaveLength(1);
+  expect(batch!.saves[0].json).toBeUndefined();
+  expect(Object.keys(batch!.saves[0].sidecars)).toEqual(['drawing-d1.svg']);
+});
+
+test('removing a drawing names its file for the Trash', () => {
+  const { prev, baseline } = start([withDrawing(nb('n1', 'One'), drawing('d1'))]);
+  const next = prev.notebooks.map((n) => ({ ...n, blocks: n.blocks.filter((b) => b.type !== 'drawing') }));
+  const { batch } = plan(prev, { notebooks: next }, baseline);
+  expect(batch!.saves[0].removedSidecars).toEqual(['drawing-d1.svg']);
+  expect(batch!.saves[0].sidecars).toEqual({});
 });
