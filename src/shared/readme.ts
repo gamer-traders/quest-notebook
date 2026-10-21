@@ -1,5 +1,9 @@
+/** Which version of the README this is. A README an earlier app version wrote is replaced by this one. */
+export const README_MARKER = '<!-- quest-notebook-readme: 2 -->';
+
 /** The README.md written into a new workspace: the file format, for the people and AI tools that open the folder. */
 export const WORKSPACE_README = `# Quest Notebook workspace
+${README_MARKER}
 
 This folder is a Quest Notebook workspace: a trading notebook whose pages are plain JSON files.
 The Quest Notebook app shows them as Notion-style pages with live charts. You can also read and edit
@@ -13,15 +17,18 @@ README.md                     this file
 .quest/state.json             what the app was showing (the app's own; don't edit)
 <Space>/                      a top-level folder is a space, named after the folder
   <Page title>.json           a page
-  <Page title>/               the sub-pages of "<Page title>", if it has any
-    <Sub-page title>.json
+  <Page title>/               the page's folder, if it has sub-pages or drawings
+    <Sub-page title>.json     a sub-page
+    drawing-<id>.svg          a drawing on the page
 \`\`\`
 
 - **Pages:** every \`.json\` file inside a space folder is a page.
-- **Ignored:** files at the top of the workspace, names starting with \`.\`, and files that aren't \`.json\`.
+- **Ignored:** files at the top of the workspace, names starting with \`.\`, and files that aren't \`.json\` (except a page's drawings).
 - **File names:** a page's file is named after its title, with \`/ \\ : * ? " < > |\` replaced by \`-\`. Pages with the same title next to each other get \`Title 2.json\`, \`Title 3.json\`, ….
 - **Renaming a file:** the file's new name becomes the page's title.
-- **A folder with no page file:** it becomes a page, and the app writes its \`.json\`.
+- **A page and its folder go together.** Rename or move the folder along with the page file. If the folder holds only drawings and you forget it, the app moves it after the page file for you.
+- **A folder with no page file:** it becomes a page, and the app writes its \`.json\`. A folder holding only drawing files doesn't: it's what a page left behind.
+- **This README** is rewritten by the app when the file format changes. Keep your own notes in pages.
 
 ## Page file
 
@@ -122,8 +129,12 @@ The SVG is the drawing: a picture anyone can open, whose paths also carry the st
 | \`data-points\` | \`x,y,pressure\` triples separated by spaces. Pressure runs from 0 to 1. |
 
 - **The points are the truth.** \`d\` is the drawn outline, and the app works it out again from \`data-points\`.
-  - To add a stroke, a \`<path>\` with \`data-points\` is enough; the app fills in the rest.
-  - Paths without \`data-points\`, like the background, are only decoration.
+  - To add a stroke, a \`<path>\` with \`data-points\` is enough. The app shows it at once, and fills in the outline the next time someone draws in that drawing.
+  - Strokes can also go in the page, as a \`strokes\` list on the drawing block (each \`{ "tool", "color", "size", "points" }\`, with \`points\` as above). The app adds them to the drawing's file and takes them out of the page. They never replace the strokes already in the file.
+- **Only strokes are kept.** When the app writes a drawing, the file holds its paper, its background and its strokes. Anything else in it, like a label, a shape or a path without \`data-points\`, isn't drawn again: the old file goes to the Trash first, so nothing is lost.
+- **Ids and file names.** A drawing's \`id\` is letters, digits, \`-\` or \`_\` (at most 64), its own on the page, and its file is always \`drawing-<id>.svg\`. A drawing with another id or file name gets a new id, its drawing is copied to the new file, and the page is updated to point at it.
+- **A missing file** shows an empty drawing, and the app never writes one for it: the file may still be on its way.
+- **Changes from outside win** when the app hasn't touched that drawing. The app never writes over a drawing file that changed since it last read it.
 - **Removing a drawing in the app** moves its file to the Trash. A drawing file whose block is gone from the page is left alone.
 
 ## Text markup

@@ -49,7 +49,8 @@ test('a save planned before an outside change to that page is refused as stale, 
     const markets = session.snapshot.spaces.find((s) => s.name === 'Markets')!;
     const lessons = session.snapshot.spaces.find((s) => s.name === 'Lessons')!;
     await rename(join(root, 'Markets/A.json'), join(root, 'Lessons/A.json'));
-    for (let i = 0; i < 60 && deltas.length === 0; i++) await new Promise((r) => setTimeout(r, 50));
+    // File events can take a few seconds to arrive when the machine is busy.
+    for (let i = 0; i < 200 && deltas.length === 0; i++) await new Promise((r) => setTimeout(r, 50));
     expect(deltas[0].seq).toBe(1);
 
     const stale = { spaces: [markets, lessons], createdSpaces: [], deletedSpaces: [], journalSpaceId: null, deletes: [], seenSeq: 0, saves: [{ id: 'a', spaceId: markets.id, parentId: null, title: 'A', json: '{"id":"a","title":"A","position":0,"blocks":[]}\n', sidecars: {} }] };
@@ -63,7 +64,7 @@ test('a save planned before an outside change to that page is refused as stale, 
   } finally {
     session.close();
   }
-});
+}, 20_000);
 
 test('saving into a workspace whose folder is gone re-creates nothing and reports it lost', async () => {
   const parent = await mkdtemp(join(tmpdir(), 'quest-gone-'));

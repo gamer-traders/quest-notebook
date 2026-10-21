@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { AdoptDeclined, adoptFolder, createWorkspace } from './create';
+import { WORKSPACE_README } from '@shared/readme';
 
 const tmp = () => mkdtemp(join(tmpdir(), 'quest-create-'));
 
@@ -79,4 +80,22 @@ test('the workspace README explains drawings and their files', async () => {
   expect(readme).toContain('## Drawings');
   expect(readme).toContain('"file": "drawing-d81k2m0q.svg"');
   expect(readme).toContain('data-points');
+});
+
+test('a README an earlier version of the app wrote is brought up to date, and anyone else’s is left alone', async () => {
+  const old = await tmp();
+  await adoptFolder(old);
+  await writeFile(join(old, 'README.md'), '# Quest Notebook workspace\n\nOld advice: edit the strokes, not the SVG.\n');
+  await adoptFolder(old);
+  expect(await readFile(join(old, 'README.md'), 'utf8')).toBe(WORKSPACE_README);
+
+  const mine = await tmp();
+  await adoptFolder(mine);
+  await writeFile(join(mine, 'README.md'), '# My trading notes\n');
+  await adoptFolder(mine);
+  expect(await readFile(join(mine, 'README.md'), 'utf8')).toBe('# My trading notes\n');
+});
+
+test('the README says which version of it this is', () => {
+  expect(WORKSPACE_README).toMatch(/<!-- quest-notebook-readme: \d+ -->/);
 });

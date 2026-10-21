@@ -1,9 +1,9 @@
-import { mkdir, readdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { formatJson } from '@shared/formatJson';
 import type { WorkspaceConfig } from '@shared/ipc';
 import { safeName } from '@shared/names';
-import { WORKSPACE_README } from '@shared/readme';
+import { README_MARKER, WORKSPACE_README } from '@shared/readme';
 import { CONFIG_PATH } from './scan';
 
 const FIRST_SPACES = ['Journal', 'Markets', 'Lessons'];
@@ -14,6 +14,15 @@ const exists = (path: string) => stat(path).then(() => true, () => false);
 async function writeReadme(root: string) {
   const path = join(root, 'README.md');
   if (!(await exists(path))) await writeFile(path, WORKSPACE_README, 'utf8');
+}
+
+/** A README an earlier version of the app wrote is brought up to date. One someone else wrote is left alone. */
+async function refreshReadme(root: string) {
+  const path = join(root, 'README.md');
+  const current = await readFile(path, 'utf8').catch(() => null);
+  if (current !== null && current.startsWith('# Quest Notebook workspace') && !current.includes(README_MARKER) && current !== WORKSPACE_README) {
+    await writeFile(path, WORKSPACE_README, 'utf8');
+  }
 }
 
 async function writeConfig(root: string, config: WorkspaceConfig) {
@@ -47,7 +56,10 @@ export class AdoptDeclined extends Error {
 export async function adoptFolder(root: string, confirm?: (root: string) => Promise<boolean>): Promise<{ isNew: boolean }> {
   const info = await stat(root).catch(() => null);
   if (!info?.isDirectory()) throw new Error(`Couldn't find ${root}`);
-  if (await exists(join(root, CONFIG_PATH))) return { isNew: false };
+  if (await exists(join(root, CONFIG_PATH))) {
+    await refreshReadme(root);
+    return { isNew: false };
+  }
   const hasFiles = (await readdir(root)).some((name) => !name.startsWith('.'));
   if (hasFiles && confirm && !(await confirm(root))) throw new AdoptDeclined(root);
   await writeConfig(root, { format: 1, name: basename(root), spaces: [], journalSpace: null });
