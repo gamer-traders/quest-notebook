@@ -65,9 +65,11 @@ const oneOf = <T extends string>(value: unknown, values: readonly T[]): T | unde
 
 /**
  * A drawing read from its SVG file: the height from the viewBox, the background, and a stroke for every path
- * with data-points. Paths without points, like a background, are left out. Null when the text isn't an SVG.
+ * with data-points. Paths without points, like a background, are left out, and so is anything in a comment.
+ * Null when the text isn't an SVG.
  */
-export function drawingFromSvg(text: string): { height: number; background: Background; strokes: Stroke[] } | null {
+export function drawingFromSvg(source: string): { height: number; background: Background; strokes: Stroke[] } | null {
+  const text = source.replace(/<!--[\s\S]*?-->/g, '');
   const root = /<svg\b([^>]*)>/i.exec(text);
   if (!root) return null;
   const rootAttrs = attributes(root[1]);

@@ -72,3 +72,10 @@ test('everything the app writes counts as the app’s own drawing file', () => {
     expect(isAppMadeDrawing(drawingToSvg({ height: 400, background, strokes: [] }))).toBe(true);
   }
 });
+
+test('a stroke commented out in the file is not part of the drawing', () => {
+  const svg = drawingToSvg({ height: 420, background: 'blank', strokes: [pen, marker] });
+  const hidden = svg.replace(/(<path data-tool="highlighter"[^>]*\/>)/, '<!-- $1 -->');
+  expect(hidden).toContain('<!-- <path data-tool="highlighter"');
+  expect(drawingFromSvg(hidden)!.strokes.map((s) => s.tool)).toEqual(['pen']);
+});
