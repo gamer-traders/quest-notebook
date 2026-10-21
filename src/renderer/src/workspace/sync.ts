@@ -252,31 +252,56 @@ export function startSync<S extends SyncedState>(
   // Pages whose save failed or was refused as stale: their edits are still only here.
   const unsent = new Set<string>();
 
-  async function send(batch: FlushBatch) {
-    let failed: string[] = [];
+  /**
+   * Deletes that may not have reached the disk are planned again: the pages go back into what was sent, so the
+   * next plan finds them gone again. A page that came back from disk meanwhile is there, and stays.
+   */
+  const unsendDeletes = (before: SyncSlice, ids: Iterable<string>) => {
+    const again = new Set(ids);
+    const sent = new Set(prev.notebooks.map((n) => n.id));
+    const back = before.notebooks.filter((n) => again.has(n.id) && !sent.has(n.id));
+    if (back.length) prev = { ...prev, notebooks: [...prev.notebooks, ...back] };
+  };
+
+  /** The spaces of a batch that failed are sent again, unless what came from disk since replaced them. */
+  const unsendSpaces = (before: SyncSlice, batch: FlushBatch) => {
+    if (prev.spaces === batch.spaces) prev = { ...prev, spaces: before.spaces };
+    if (prev.journalSpaceId === batch.journalSpaceId) prev = { ...prev, journalSpaceId: before.journalSpaceId };
+  };
+
+  /** Sends a batch planned from `before`, the state sent until then. */
+  async function send(batch: FlushBatch, before: SyncSlice) {
+    let failed: string[] | null = null;
     try {
       const result = await api.flush({ ...batch, root, seenSeq });
       useSaveStatus.setState({ error: result.ok ? null : (result.error ?? 'Saving failed') });
       for (const id of Object.keys(result.paths)) unsent.delete(id);
       if (!result.ok) failed = batch.saves.filter((s) => !(s.id in result.paths)).map((s) => s.id);
-      // Saves of pages that changed on disk meanwhile are planned again, from the page as it is now.
+      // Saves of pages that changed on disk meanwhile are planned again, from the page as it is now. A delete is
+      // too, but it isn't an edit: the outside change reaches the window, and the page comes back with it.
+      const deleting = new Set(batch.deletes);
       for (const id of result.stale ?? []) {
+        if (deleting.has(id)) continue;
         baseline.delete(id);
         dirty.add(id);
         unsent.add(id);
       }
+      unsendDeletes(before, (result.stale ?? []).filter((id) => deleting.has(id)));
       if (result.stale?.length) schedule();
     } catch (error) {
       useSaveStatus.setState({ error: message(error) });
       failed = batch.saves.map((s) => s.id);
     }
-    // Pages that didn't reach the disk are tried again.
-    if (failed.length) {
+    // What didn't reach the disk is tried again. Main doesn't say which deletes and spaces went, so they're all
+    // sent again: main skips pages and spaces it no longer has, and leaves spaces as they are.
+    if (failed) {
       for (const id of failed) {
         baseline.delete(id);
         dirty.add(id);
         unsent.add(id);
       }
+      unsendDeletes(before, batch.deletes);
+      unsendSpaces(before, batch);
       schedule(RETRY_DELAY);
     }
   }
@@ -288,12 +313,13 @@ export function startSync<S extends SyncedState>(
     if (stopped) return;
     const next = slice(store.getState());
     const planned = planFlush(prev, next, baseline, dirty);
+    const before = prev;
     prev = next;
     baseline = planned.baseline;
     dirty = new Set();
     const batch = planned.batch;
     if (!batch) return;
-    inFlight = send(batch);
+    inFlight = send(batch, before);
     try {
       await inFlight;
     } finally {

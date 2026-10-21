@@ -155,3 +155,86 @@ test('a page whose save failed or was refused as stale counts as unsaved until i
   await vi.advanceTimersByTimeAsync(400);
   expect(sync.pendingIds().has('a')).toBe(false);
 });
+
+test('a page delete whose save failed is sent again', async () => {
+  vi.useFakeTimers();
+  flushResult = async () => ({ ok: false, error: 'Disk full', paths: {} });
+  useStore.getState().deletePage('b');
+  await sync.flush();
+  expect(batches[0].deletes).toEqual(['b']);
+  flushResult = async () => ({ ok: true, paths: {} });
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(batches).toHaveLength(2);
+  expect(batches[1].deletes).toEqual(['b']);
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(batches).toHaveLength(2);
+});
+
+test('a page delete is sent again when main could not be reached', async () => {
+  vi.useFakeTimers();
+  flushResult = async () => {
+    throw new Error('No answer');
+  };
+  useStore.getState().deletePage('b');
+  await sync.flush();
+  flushResult = async () => ({ ok: true, paths: {} });
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(batches.map((b) => b.deletes)).toEqual([['b'], ['b']]);
+});
+
+test('a page delete refused as stale is planned again, and a page that comes back from disk stays', async () => {
+  vi.useFakeTimers();
+  flushResult = async () => ({ ok: true, paths: {}, stale: ['b'] });
+  useStore.getState().deletePage('b');
+  await sync.flush();
+  // Not an edit waiting to be saved: the outside change to the page still reaches the window.
+  expect(sync.pendingIds().has('b')).toBe(false);
+  await vi.advanceTimersByTimeAsync(400);
+  expect(batches.map((b) => b.deletes)).toEqual([['b'], ['b']]);
+
+  flushResult = async () => ({ ok: true, paths: {} });
+  sync.applyFromDisk(
+    () =>
+      useStore.getState().applyDiskDelta({
+        seq: 1,
+        spaces: snapshot.spaces,
+        journalSpaceId: null,
+        pages: [{ ...snapshot.pages[1], file: file('b', 'B', 'written by an AI') }],
+        removed: [],
+      }),
+    1,
+  );
+  await vi.advanceTimersByTimeAsync(400);
+  await sync.flush();
+  expect(batches).toHaveLength(2);
+  expect(useStore.getState().notebooks.some((n) => n.id === 'b')).toBe(true);
+});
+
+test('a space made in a save that failed is made on the next try', async () => {
+  vi.useFakeTimers();
+  flushResult = async () => ({ ok: false, error: 'Disk full', paths: {} });
+  const id = useStore.getState().createSpace('Ideas');
+  await sync.flush();
+  expect(batches[0].createdSpaces).toEqual([id]);
+  flushResult = async () => ({ ok: true, paths: {} });
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(batches).toHaveLength(2);
+  expect(batches[1].createdSpaces).toEqual([id]);
+});
+
+test('a space deleted or renamed in a save that failed is sent again', async () => {
+  vi.useFakeTimers();
+  const id = useStore.getState().createSpace('Ideas');
+  await sync.flush();
+  flushResult = async () => {
+    throw new Error('No answer');
+  };
+  useStore.getState().deleteSpace(id);
+  useStore.getState().renameSpace('sm', 'Crypto');
+  await sync.flush();
+  expect(batches[1]).toMatchObject({ deletedSpaces: [id], spaces: [{ id: 'sm', name: 'Crypto' }] });
+  flushResult = async () => ({ ok: true, paths: {} });
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(batches).toHaveLength(3);
+  expect(batches[2]).toMatchObject({ createdSpaces: [], deletedSpaces: [id], spaces: [{ id: 'sm', name: 'Crypto' }] });
+});
