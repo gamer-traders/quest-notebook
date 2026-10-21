@@ -1,0 +1,758 @@
+/*
+  The Claude panel: a column on the right of the window, beside the page, and over the page on narrow windows.
+  Drawn with the app's tokens only, so it follows light and dark, density and text size. Claude's replies are
+  on paper; the owner's messages on a light highlighter tint.
+*/
+
+/* The window gains a third column for it. */
+@media (min-width: 1000px) {
+  .app.claude-open {
+    grid-template-columns: 268px minmax(0, 1fr) auto;
+  }
+}
+
+.claude-panel {
+  --claude-pad: 16px;
+  --claude-gap: 12px;
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  /* As wide as it was left, but never so wide the page gets less than 400px. */
+  width: max(320px, min(var(--claude-width, 400px), 100vw - 668px));
+  border-left: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: calc(var(--ui-size) - 1px);
+}
+
+:root[data-density='compact'] .claude-panel {
+  --claude-pad: 10px;
+  --claude-gap: 8px;
+}
+
+:root[data-density='comfortable'] .claude-panel {
+  --claude-pad: 22px;
+  --claude-gap: 18px;
+}
+
+/* Narrow windows: over the page, at the right, the whole height. */
+@media (max-width: 999.98px) {
+  .claude-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    height: auto;
+    width: min(var(--claude-width, 400px), 100vw);
+    box-shadow: var(--lift);
+  }
+}
+
+.claude-panel.is-resizing {
+  user-select: none;
+}
+
+/* The left edge, which drags to resize. A line shows on it when pointed at, dragged or focused. */
+
+.claude-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  z-index: 2;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.claude-resize::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  transition: background 0.1s;
+}
+
+.claude-resize:hover::after,
+.claude-panel.is-resizing .claude-resize::after {
+  background: var(--rule-strong);
+}
+
+.claude-resize:focus-visible {
+  outline: none;
+}
+
+.claude-resize:focus-visible::after {
+  background: var(--focus);
+}
+
+/* Header: the chat's title, Chats, New chat, close. */
+
+.claude-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 10px calc(var(--claude-pad) - 6px) 10px var(--claude-pad);
+  border-bottom: 1px solid var(--rule);
+}
+
+.claude-head button {
+  font-size: 13px;
+}
+
+/* The serif, like Settings' title: it names the panel's contents, and isn't page text. */
+.claude-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0 6px 0 0;
+  font-family: var(--serif);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.claude-panel button.claude-icon {
+  display: inline-grid;
+  place-items: center;
+  padding: var(--button-pad-y);
+}
+
+.claude-caret {
+  font-size: 11px;
+}
+
+/* The chat list, under the header at its right, so it stays inside the panel however wide it is. */
+
+.claude-chat-list {
+  right: calc(var(--claude-pad) - 6px);
+  width: 290px;
+  max-width: calc(100% - 2 * var(--claude-pad) + 12px);
+  max-height: min(420px, 70vh);
+  overflow-y: auto;
+}
+
+.claude-chat-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.claude-chat-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 4px;
+}
+
+.claude-chat-row:hover {
+  background: var(--chart-grid);
+}
+
+.claude-chat-row.is-current {
+  box-shadow: inset 3px 0 0 var(--mark-solid);
+}
+
+.claude-chat-list .claude-chat-open {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+  white-space: normal;
+}
+
+.claude-chat-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.claude-chat-date {
+  font-size: 12px;
+  color: var(--pencil);
+}
+
+/* Delete stays out of sight until its chat is pointed at or focused, like a page row's tools. */
+.claude-chat-list .claude-chat-delete {
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 5px;
+  color: var(--pencil);
+  opacity: 0;
+}
+
+.claude-chat-row:hover .claude-chat-delete,
+.claude-chat-row:focus-within .claude-chat-delete {
+  opacity: 1;
+}
+
+.claude-chat-list .claude-chat-delete:hover:not(:disabled) {
+  color: var(--down);
+  background: var(--rule);
+}
+
+@media (hover: none) {
+  .claude-chat-list .claude-chat-delete {
+    opacity: 1;
+  }
+}
+
+.claude-chat-empty {
+  margin: 6px 8px;
+  color: var(--pencil);
+  font-size: 13px;
+}
+
+/* In place of the chat: checking, and what to do when Claude Code can't be used yet. */
+
+.claude-checking {
+  margin: 0;
+  padding: var(--claude-pad);
+  color: var(--pencil);
+  font-size: 13px;
+}
+
+.claude-setup {
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+  padding: var(--claude-pad);
+  line-height: 1.5;
+}
+
+.claude-setup p {
+  margin: 0;
+}
+
+.claude-setup-error {
+  padding: 10px 14px;
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--down);
+  border-radius: var(--radius);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.claude-setup code,
+.claude-md code {
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: 0.88em;
+  background: var(--chart-grid);
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+
+.claude-setup a,
+.claude-md a {
+  color: var(--focus);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--focus) 45%, transparent);
+  text-underline-offset: 3px;
+}
+
+.claude-setup a:hover,
+.claude-md a:hover {
+  text-decoration-color: currentColor;
+}
+
+/* Messages */
+
+.claude-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--claude-pad);
+}
+
+.claude-messages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--claude-gap);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.claude-msg {
+  min-width: 0;
+  padding: calc(var(--claude-pad) * 0.5) calc(var(--claude-pad) * 0.75);
+  border-radius: var(--radius);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.claude-msg.is-user {
+  align-self: flex-end;
+  max-width: 88%;
+  background: color-mix(in srgb, var(--mark) 55%, transparent);
+}
+
+.claude-msg.is-reply {
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+}
+
+.claude-plain {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.claude-working {
+  margin: 0;
+  color: var(--pencil);
+  font-size: 13px;
+}
+
+.claude-scroll > .claude-working {
+  margin-top: var(--claude-gap);
+}
+
+.claude-msg-error {
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  background: var(--paper);
+  border-left: 3px solid var(--down);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  color: var(--ink-soft);
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+.claude-msg-error:first-child {
+  margin-top: 0;
+}
+
+/* A finished reply's Markdown, in the interface font. */
+
+.claude-md > :first-child {
+  margin-top: 0;
+}
+
+.claude-md > :last-child {
+  margin-bottom: 0;
+}
+
+.claude-md p,
+.claude-md ul,
+.claude-md ol,
+.claude-md pre,
+.claude-md blockquote {
+  margin: 0 0 0.6em;
+}
+
+.claude-md ul,
+.claude-md ol {
+  padding-left: 1.3em;
+}
+
+.claude-md li + li {
+  margin-top: 0.15em;
+}
+
+.claude-md li > p {
+  margin: 0;
+}
+
+.claude-md h1,
+.claude-md h2,
+.claude-md h3,
+.claude-md h4,
+.claude-md h5,
+.claude-md h6 {
+  margin: 0.9em 0 0.3em;
+  font-size: 1em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.claude-md h1,
+.claude-md h2 {
+  font-size: 1.1em;
+}
+
+.claude-md pre {
+  padding: 8px 10px;
+  overflow-x: auto;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+
+.claude-md pre code {
+  padding: 0;
+  background: none;
+  font-size: 12.5px;
+}
+
+.claude-md blockquote {
+  margin-left: 0;
+  padding-left: 10px;
+  border-left: 3px solid var(--rule-strong);
+  color: var(--ink-soft);
+}
+
+.claude-md hr {
+  margin: 0.8em 0;
+  border: none;
+  border-top: 1px solid var(--rule);
+}
+
+.claude-link-off {
+  text-decoration: underline dotted;
+}
+
+.claude-img {
+  color: var(--pencil);
+}
+
+/* What Claude did, and what it changed: quiet lines, the page's name in italics. */
+
+.claude-actions {
+  display: grid;
+  gap: 1px;
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  color: var(--pencil);
+  font-size: 13px;
+}
+
+.claude-actions:first-child {
+  margin-top: 0;
+}
+
+.claude-actions em,
+.claude-change em {
+  color: var(--ink-soft);
+}
+
+.claude-actions .is-refused {
+  opacity: 0.6;
+}
+
+.claude-panel button.claude-line-link {
+  display: inline;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  text-align: left;
+}
+
+.claude-line-link:hover em {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.claude-changes {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--rule);
+  font-size: 13px;
+}
+
+.claude-changes:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.claude-changes-head {
+  margin: 0 0 2px;
+  color: var(--pencil);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.claude-changes ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.claude-changes li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 8px;
+  min-height: 26px;
+}
+
+.claude-change {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.claude-changes .is-undone .claude-change {
+  color: var(--pencil);
+  text-decoration: line-through;
+}
+
+.claude-changes .is-undone .claude-change em {
+  color: inherit;
+}
+
+/* Under its line, so Undo stays beside the page's name. */
+.claude-not-applied {
+  order: 3;
+  flex-basis: 100%;
+  color: var(--mark-ink);
+  font-size: 12px;
+}
+
+.claude-panel button.claude-undo,
+.claude-panel button.claude-undo-all {
+  padding: 1px 6px;
+  font-size: 12.5px;
+}
+
+.claude-undo {
+  margin-left: auto;
+}
+
+.claude-panel button.claude-undo-all {
+  margin: 4px 0 0 -6px;
+}
+
+/* An empty chat: a line about what Claude can do, and the starters. */
+
+.claude-empty {
+  display: grid;
+  gap: 12px;
+}
+
+.claude-empty-lede {
+  margin: 0;
+  color: var(--pencil);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.claude-quick {
+  display: grid;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.claude-quick li {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.claude-quick-send {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+/* The message box, with what goes with the message above it. */
+
+.claude-composer {
+  display: grid;
+  gap: 6px;
+  padding: 10px var(--claude-pad) var(--claude-pad);
+  border-top: 1px solid var(--rule);
+}
+
+.claude-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  padding: 6px 4px 6px 10px;
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--down);
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+
+.claude-error > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.claude-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.claude-msg .claude-chips {
+  margin-bottom: 4px;
+}
+
+.claude-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 22px;
+  padding: 1px 8px;
+  background: var(--sheet);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  line-height: 1.3;
+}
+
+.claude-chip:has(.claude-chip-remove) {
+  padding-right: 2px;
+}
+
+.claude-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.claude-panel button.claude-chip-remove {
+  flex: none;
+  margin-left: 2px;
+  padding: 0 5px;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: var(--pencil);
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.claude-panel button.claude-chip-remove:hover:not(:disabled) {
+  color: var(--ink);
+  background: var(--rule);
+}
+
+.claude-box {
+  background: var(--sheet);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+}
+
+.claude-box:focus-within {
+  border-color: var(--ink-soft);
+}
+
+/* The focus ring goes round the whole box, as it would round any other text field. */
+.claude-box:has(.claude-input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.claude-input {
+  display: block;
+  width: 100%;
+  /* Grows with its text, up to about eight lines, then scrolls. */
+  field-sizing: content;
+  min-height: calc(1lh + 16px);
+  max-height: calc(8lh + 16px);
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  line-height: 1.45;
+  resize: none;
+  overflow-y: auto;
+}
+
+.claude-input:focus-visible {
+  outline: none;
+}
+
+/* The @ picker, under the text: titles and paths, like the [[ menu. */
+
+.claude-picker {
+  max-height: min(320px, 40vh);
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  border-top: 1px solid var(--rule);
+}
+
+.claude-picker li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.claude-picker li.is-active {
+  background: var(--chart-grid);
+}
+
+.claude-picker-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  background: var(--paper);
+  box-shadow: inset 0 0 0 1px var(--rule);
+  color: var(--ink-soft);
+}
+
+.claude-picker-text {
+  display: grid;
+  min-width: 0;
+}
+
+.claude-picker-title,
+.claude-picker-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.claude-picker-path {
+  color: var(--pencil);
+  font-size: 11.5px;
+}
+
+.claude-picker-path:empty {
+  display: none;
+}
+
+.claude-send {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 0 6px 6px 10px;
+}
+
+.claude-hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--pencil);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -6,6 +6,7 @@ import { childrenOf } from '../page/tree';
 import { unsavedEditors } from '../editor/pending';
 import { deltaToNotebooks, drawingsIn, snapshotToState } from './load';
 import { startSync, useSaveStatus, type SyncHandle } from './sync';
+import { bindClaude, useClaude } from '../claude/store';
 
 let sync: SyncHandle | null = null;
 
@@ -19,6 +20,8 @@ export function startWorkspace(snapshot: WorkspaceSnapshot): void {
   const loaded = snapshotToState(snapshot);
   useStore.getState().loadWorkspace(snapshot.root, snapshot.name, loaded);
   sync = startSync(window.quest.workspace, useStore, loaded.repaired, loaded.drawingsToWrite);
+  // Claude starts this workspace with a new chat, and looks at its chats.
+  useClaude.getState().reset();
 }
 
 /** Stops keeping a workspace in step, after sending what it hasn't yet. */
@@ -119,7 +122,9 @@ export async function createAndOpen(parentDir: string, name: string, samples: bo
 
 /** At start: listens to main, and shows the workspace main reopened, if any. */
 export async function bootWorkspace(): Promise<void> {
-  const { workspace, app } = window.quest;
+  const { workspace, app, claude } = window.quest;
+  // Also listens for Claude's events: once, for the window's whole life.
+  bindClaude(claude);
   workspace.onDiskChange(applyDisk);
   workspace.onLost((message) => {
     sync?.stop();

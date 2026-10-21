@@ -4,6 +4,10 @@ import { flattenBlocks } from '../page/blocks';
 import { descendantIds, displayTitle } from '../page/tree';
 import { useStore } from '../store';
 import { NotebookEditor } from '../editor/NotebookEditor';
+import { toggleClaude } from '../claude/ClaudePanel';
+import { claudeShortcutLabel } from '../claude/panel';
+import { useClaude } from '../claude/store';
+import { IS_MAC } from './SettingsDialog';
 import { Backlinks } from './Backlinks';
 import { PagePath } from './PagePath';
 import { SubPagesPanel } from './SubPagesPanel';
@@ -19,6 +23,7 @@ export function NotebookView() {
   const flash = useStore((s) => s.flashBlockId);
   const focusTitleId = useStore((s) => s.focusTitleId);
   const revision = useStore((s) => (nb ? (s.diskRevision[nb.id] ?? 0) : 0));
+  const claudeOpen = useClaude((s) => s.open);
   const titleRef = useRef<HTMLInputElement>(null);
 
   // A page just made from the sidebar or the panel opens with its title ready to type.
@@ -88,6 +93,15 @@ export function NotebookView() {
           onChange={(e) => updateNotebook(nb.id, { title: e.target.value })}
         />
         <div className="notebook-meta">
+          <button
+            className="quiet"
+            aria-expanded={claudeOpen}
+            aria-keyshortcuts={IS_MAC ? 'Meta+J' : 'Control+J'}
+            title={`${claudeOpen ? 'Close' : 'Open'} Claude (${claudeShortcutLabel(IS_MAC)})`}
+            onClick={toggleClaude}
+          >
+            Claude
+          </button>
           <button
             className="quiet danger"
             onClick={() => {
