@@ -103,6 +103,9 @@ export class Workspaces {
         fileChanges: (changes) => {
           if (this.session === next) claude?.fileChanges(changes);
         },
+        repaired: (files) => {
+          if (this.session === next) claude?.repaired(files);
+        },
       },
       this.host.trash,
     );

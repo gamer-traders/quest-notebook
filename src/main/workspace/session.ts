@@ -4,8 +4,16 @@ import { formatJson } from '@shared/formatJson';
 import type { DiskDelta, FileChange, FlushBatch, FlushResult, UiState, WorkspaceSnapshot } from '@shared/ipc';
 import { applyFlush } from './apply';
 import { insideRoot, writeFileAtomic } from './paths';
-import { STATE_PATH, scanWorkspace } from './scan';
+import { STATE_PATH, scanWorkspace, type ScanIndex } from './scan';
 import { diffScans, fileChanges, knownAfterFlush, knownFromScan, watchWorkspace, type Known } from './watch';
+
+/** A page or drawing file the app rewrote. `path` is relative to the workspace folder, with '/' between parts. */
+export interface RepairedFile {
+  path: string;
+  /** Null for a file that is new. */
+  before: string | null;
+  after: string;
+}
 
 export interface SessionEvents {
   /** Something changed on disk outside the app. */
@@ -14,6 +22,38 @@ export interface SessionEvents {
   lost(message: string): void;
   /** The page and drawing files that changed on disk outside the app, by what they held before. */
   fileChanges?(changes: FileChange[]): void;
+  /**
+   * The window saved pages only to fill in or tidy what an outside write left (a batch's `repairs`): the files of each
+   * such page that changed, by what they held before and after. The page file comes first, and is listed whenever any of
+   * its files changed, even if it didn't, so its text can be checked too.
+   */
+  repaired?(files: RepairedFile[]): void;
+}
+
+/** A page's file and drawing files as main knows them, copied, so a flush updating the index in place leaves them be. */
+interface PageFiles {
+  path: string;
+  text: string;
+  /** Drawing file path → text. */
+  drawings: Map<string, string>;
+}
+
+function pageFiles(index: ScanIndex, id: string): PageFiles | null {
+  const entry = index.pages.get(id);
+  if (!entry || entry.error !== undefined) return null;
+  const folder = entry.path.replace(/\.json$/i, '');
+  return { path: entry.path, text: entry.text, drawings: new Map(Object.entries(entry.sidecars ?? {}).map(([name, file]) => [`${folder}/${name}`, file.text])) };
+}
+
+/** What a save changed in a page's files: the page file, then its drawing files that changed. Nothing for a page that moved. */
+function changedFiles(before: PageFiles, after: PageFiles | null): RepairedFile[] {
+  if (!after || after.path !== before.path) return [];
+  const drawings = [...after.drawings]
+    .filter(([path, text]) => before.drawings.get(path) !== text)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([path, text]) => ({ path, before: before.drawings.get(path) ?? null, after: text }));
+  if (before.text === after.text && drawings.length === 0) return [];
+  return [{ path: after.path, before: before.text, after: after.text }, ...drawings];
 }
 
 /**
@@ -96,8 +136,23 @@ export class WorkspaceSession {
       const isStale = (id: string) => (this.changedAt.get(id) ?? 0) > seen;
       const stale = [...batch.saves.map((s) => s.id), ...batch.deletes].filter(isStale);
       const fresh = { ...batch, saves: batch.saves.filter((s) => !isStale(s.id)), deletes: batch.deletes.filter((id) => !isStale(id)) };
+      // Pages saved only to tidy what an outside write left, as they were on disk before.
+      const repairs = new Set(Array.isArray(batch.repairs) ? batch.repairs : []);
+      const tidied = fresh.saves.flatMap((s) => {
+        const files = repairs.has(s.id) ? pageFiles(this.known.index, s.id) : null;
+        return files ? [{ id: s.id, files }] : [];
+      });
       const result = await applyFlush(this.root, this.known.index, fresh, { trash: this.trash, now: () => new Date() });
       this.known = knownAfterFlush(this.known, fresh);
+      const repaired = tidied.flatMap(({ id, files }) => changedFiles(files, pageFiles(this.known.index, id)));
+      if (repaired.length) {
+        // What was saved stays saved, whatever the listener does.
+        try {
+          this.events.repaired?.(repaired);
+        } catch (error) {
+          console.error('Reporting a tidy-up failed:', error);
+        }
+      }
       const all = [...stale, ...(result.stale ?? [])];
       return all.length ? { ...result, stale: all } : result;
     });

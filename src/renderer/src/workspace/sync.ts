@@ -166,6 +166,18 @@ export function planFlush(prev: SyncSlice, next: SyncSlice, baseline: Baseline, 
   };
 }
 
+/**
+ * The batch, naming the saves that only fill in or tidy what came from disk: pages marked for that and not edited here
+ * since, so their object is still the one taken in from disk. Main tells Claude's undo about them.
+ */
+function withRepairs(batch: FlushBatch, prev: SyncSlice, next: SyncSlice, marked: Set<string>): FlushBatch {
+  if (!marked.size) return batch;
+  const before = new Map(prev.notebooks.map((n) => [n.id, n]));
+  const after = new Map(next.notebooks.map((n) => [n.id, n]));
+  const repairs = batch.saves.filter((s) => marked.has(s.id) && before.has(s.id) && before.get(s.id) === after.get(s.id)).map((s) => s.id);
+  return repairs.length ? { ...batch, repairs } : batch;
+}
+
 interface SyncedState extends SyncSlice {
   workspace: { root: string } | null;
   activeId: string | null;
@@ -178,9 +190,15 @@ export interface SyncHandle {
   flush(): Promise<void>;
   /** Runs a store update that came from disk, change number `seq`: nothing in it is sent back. */
   applyFromDisk(update: () => void, seq?: number): void;
-  /** Pages to write back even if nothing in them changes, such as files that were missing fields. */
+  /**
+   * Pages to write back even if nothing in them changes, such as files that were missing fields. The save says it only
+   * fills them in, unless they're edited here first.
+   */
   markDirty(ids: Iterable<string>): void;
-  /** Drawings to write to their files, by page, such as strokes moving out of the page. The page files are left as they are. */
+  /**
+   * Drawings to write to their files, by page, such as strokes moving out of the page. The page files are left as they
+   * are. Like `markDirty`, the save says it only tidies the page, unless it's edited here first.
+   */
   writeDrawings(pageId: string, drawingIds: Iterable<string>): void;
   /**
    * Drawings changed on disk, for a page with unsent edits: each one not touched here since it was last on disk
@@ -220,6 +238,8 @@ export function startSync<S extends SyncedState>(
   let prev = slice(store.getState());
   let baseline = baselineFor(prev, unsaved, drawingsToWrite);
   let dirty = new Set([...unsaved, ...drawingsToWrite.keys()]);
+  // Pages to be saved only to fill in or tidy what came from disk, starting with those that loaded that way.
+  let repairs = new Set(dirty);
   let fromDisk = false;
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -264,6 +284,7 @@ export function startSync<S extends SyncedState>(
         baseline.delete(id);
         dirty.add(id);
         unsent.add(id);
+        if (batch.repairs?.includes(id)) repairs.add(id);
       }
       if (result.stale?.length) schedule();
     } catch (error) {
@@ -276,6 +297,8 @@ export function startSync<S extends SyncedState>(
         baseline.delete(id);
         dirty.add(id);
         unsent.add(id);
+        // Still only a repair when it's tried again, unless it's edited meanwhile.
+        if (batch.repairs?.includes(id)) repairs.add(id);
       }
       schedule(RETRY_DELAY);
     }
@@ -288,10 +311,11 @@ export function startSync<S extends SyncedState>(
     if (stopped) return;
     const next = slice(store.getState());
     const planned = planFlush(prev, next, baseline, dirty);
+    const batch = planned.batch && withRepairs(planned.batch, prev, next, repairs);
     prev = next;
     baseline = planned.baseline;
     dirty = new Set();
-    const batch = planned.batch;
+    repairs = new Set();
     if (!batch) return;
     inFlight = send(batch);
     try {
@@ -361,6 +385,7 @@ export function startSync<S extends SyncedState>(
       // drawings are on disk as they are, and aren't written for this.
       for (const id of ids) {
         dirty.add(id);
+        repairs.add(id);
         const sent = baseline.get(id);
         if (sent) baseline.set(id, { ...sent, json: '' });
       }
@@ -383,6 +408,7 @@ export function startSync<S extends SyncedState>(
       const onDisk = baseline.get(pageId)?.drawings;
       for (const id of drawingIds) onDisk?.delete(id);
       dirty.add(pageId);
+      repairs.add(pageId);
       schedule();
     },
 

@@ -118,6 +118,70 @@ test('a page marked dirty after a change from disk is written back, even though 
   expect(JSON.parse(batches[0].saves[0].json!)).toMatchObject({ id: 'b', title: 'B', position: 0, created: expect.any(String), updated: expect.any(String) });
 });
 
+const fromDisk = (record: WorkspaceSnapshot['pages'][number]) =>
+  sync.applyFromDisk(() => useStore.getState().applyDiskDelta({ seq: 1, spaces: snapshot.spaces, journalSpaceId: null, pages: [record], removed: [] }), 1);
+
+test('a page written back only to fill in what the disk left is sent as a repair', async () => {
+  fromDisk({ ...snapshot.pages[1], file: { id: 'b', title: 'B', blocks: [] } });
+  sync.markDirty(['b']);
+  await sync.flush();
+  expect(batches).toHaveLength(1);
+  expect(batches[0].saves.map((s) => s.id)).toEqual(['b']);
+  expect(batches[0].repairs).toEqual(['b']);
+});
+
+test('a repair the owner edits before it is saved is an edit, not a repair', async () => {
+  fromDisk({ ...snapshot.pages[1], file: { id: 'b', title: 'B', blocks: [] } });
+  sync.markDirty(['b']);
+  useStore.getState().updateNotebook('b', { title: 'B edited' });
+  await sync.flush();
+  expect(batches[0].saves.map((s) => s.id)).toEqual(['b']);
+  expect(batches[0]).not.toHaveProperty('repairs');
+});
+
+test('drawings written to their files for a page from disk make that page a repair too', async () => {
+  const inline = { type: 'drawing', id: 'd1', strokes: [{ tool: 'pen', points: '10,10,0.5 60,60,0.5' }] };
+  fromDisk({ ...snapshot.pages[1], file: { ...file('b', 'B'), blocks: [inline] } });
+  sync.writeDrawings('b', ['d1']);
+  await sync.flush();
+  expect(batches[0].saves.map((s) => s.id)).toEqual(['b']);
+  expect(Object.keys(batches[0].saves[0].sidecars)).toEqual(['drawing-d1.svg']);
+  expect(batches[0].repairs).toEqual(['b']);
+});
+
+test('an edit never sends repairs, and a repair saved beside an edit is the only one named', async () => {
+  useStore.getState().updateNotebook('a', { title: 'A edited' });
+  await sync.flush();
+  expect(batches[0].saves.map((s) => s.id)).toEqual(['a']);
+  expect(batches[0]).not.toHaveProperty('repairs');
+
+  fromDisk({ ...snapshot.pages[1], file: { id: 'b', title: 'B', blocks: [] } });
+  sync.markDirty(['b']);
+  useStore.getState().updateNotebook('a', { title: 'A edited again' });
+  await sync.flush();
+  expect(batches[1].saves.map((s) => s.id).sort()).toEqual(['a', 'b']);
+  expect(batches[1].repairs).toEqual(['b']);
+
+  // Once sent, the page is no longer a repair: an edit to it later is an edit.
+  useStore.getState().updateNotebook('b', { title: 'B edited' });
+  await sync.flush();
+  expect(batches[2].saves.map((s) => s.id)).toEqual(['b']);
+  expect(batches[2]).not.toHaveProperty('repairs');
+});
+
+test('a repair whose save failed is still a repair when it is tried again', async () => {
+  vi.useFakeTimers();
+  flushResult = async () => ({ ok: false, error: 'Disk full', paths: {} });
+  fromDisk({ ...snapshot.pages[1], file: { id: 'b', title: 'B', blocks: [] } });
+  sync.markDirty(['b']);
+  await sync.flush();
+  expect(batches[0].repairs).toEqual(['b']);
+  flushResult = async () => ({ ok: true, paths: { b: 'Markets/B.json' } });
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(batches).toHaveLength(2);
+  expect(batches[1].repairs).toEqual(['b']);
+});
+
 test('pages missing fields when the workspace loads are written back without waiting for an edit', async () => {
   sync.stop();
   vi.useFakeTimers();
@@ -127,6 +191,8 @@ test('pages missing fields when the workspace loads are written back without wai
   await vi.advanceTimersByTimeAsync(400);
   expect(batches).toHaveLength(1);
   expect(batches[0].saves.map((s) => s.id)).toEqual(['a']);
+  // Nothing was edited here: the page is only filled in.
+  expect(batches[0].repairs).toEqual(['a']);
 });
 
 test('batches say which disk change the window has seen, and saves refused as stale are planned again', async () => {

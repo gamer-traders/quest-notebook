@@ -91,6 +91,8 @@ export interface FlushBatch {
   journalSpaceId: string | null;
   saves: PageSave[];
   deletes: string[];
+  /** Pages saved only to fill in or tidy what an outside write left, not edited here. Left out when there are none. */
+  repairs?: string[];
 }
 
 export interface FlushResult {

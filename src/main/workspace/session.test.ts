@@ -1,9 +1,9 @@
 import { access, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import type { DiskDelta, FileChange } from '@shared/ipc';
+import type { DiskDelta, FileChange, PageSave } from '@shared/ipc';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, test } from 'vitest';
-import { WorkspaceSession } from './session';
+import { describe, expect, test } from 'vitest';
+import { WorkspaceSession, type RepairedFile } from './session';
 
 test('a batch meant for another workspace is refused', async () => {
   const root = await mkdtemp(join(tmpdir(), 'quest-session-'));
@@ -228,3 +228,87 @@ test('the watcher reports an outside change by itself, once it is watching', asy
     session.close();
   }
 }, 30_000);
+
+describe('a flush that only tidies what an outside write left', () => {
+  const claude = '{"id":"a","title":"A","blocks":[]}\n';
+  const tidied = '{\n  "id": "a",\n  "title": "A",\n  "position": 0,\n  "blocks": []\n}\n';
+  const svg = '<svg viewBox="0 0 1000 300"><path data-points="10,10 90,90,0.8"/></svg>\n';
+
+  async function open() {
+    const root = await mkdtemp(join(tmpdir(), 'quest-repair-'));
+    await mkdir(join(root, 'Markets'));
+    await writeFile(join(root, 'Markets/A.json'), claude);
+    const repaired: RepairedFile[][] = [];
+    const session = await WorkspaceSession.open(root, false, { change: () => {}, lost: () => {}, repaired: (files) => repaired.push(files) }, async () => {}, 60_000);
+    const markets = session.snapshot.spaces[0];
+    const batch = (save: Partial<PageSave>, repairs?: string[]) => ({
+      spaces: [markets],
+      createdSpaces: [],
+      deletedSpaces: [],
+      journalSpaceId: null,
+      deletes: [],
+      saves: [{ id: 'a', spaceId: markets.id, parentId: null, title: 'A', sidecars: {}, ...save }],
+      ...(repairs ? { repairs } : {}),
+    });
+    return { root, session, repaired, batch };
+  }
+
+  test('reports the page file with its text before and after', async () => {
+    const { session, repaired, batch } = await open();
+    try {
+      expect((await session.flush(batch({ json: tidied }, ['a']))).ok).toBe(true);
+      expect(repaired).toEqual([[{ path: 'Markets/A.json', before: claude, after: tidied }]]);
+    } finally {
+      session.close();
+    }
+  });
+
+  test('lists a drawing file written in the same save, new ones with no text before', async () => {
+    const { root, session, repaired, batch } = await open();
+    try {
+      expect((await session.flush(batch({ json: tidied, sidecars: { 'drawing-d1.svg': svg } }, ['a']))).ok).toBe(true);
+      expect(repaired).toEqual([
+        [
+          { path: 'Markets/A.json', before: claude, after: tidied },
+          { path: 'Markets/A/drawing-d1.svg', before: null, after: svg },
+        ],
+      ]);
+      expect(await readFile(join(root, 'Markets/A/drawing-d1.svg'), 'utf8')).toBe(svg);
+
+      // A drawing rewritten alone: the page file is listed too, unchanged, so its text can be checked.
+      const redrawn = svg.replace('90,90', '80,80');
+      await session.flush(batch({ sidecars: { 'drawing-d1.svg': redrawn } }, ['a']));
+      expect(repaired[1]).toEqual([
+        { path: 'Markets/A.json', before: tidied, after: tidied },
+        { path: 'Markets/A/drawing-d1.svg', before: svg, after: redrawn },
+      ]);
+    } finally {
+      session.close();
+    }
+  });
+
+  test('says nothing for a save that is not a repair, or a repair that changes nothing', async () => {
+    const { session, repaired, batch } = await open();
+    try {
+      await session.flush(batch({ json: tidied }));
+      await session.flush(batch({ json: tidied }, ['a']));
+      await session.flush(batch({ json: tidied }, ['someone-else']));
+      expect(repaired).toEqual([]);
+    } finally {
+      session.close();
+    }
+  });
+
+  test('says nothing for a repair refused as stale', async () => {
+    const { root, session, repaired, batch } = await open();
+    try {
+      await writeFile(join(root, 'Markets/A.json'), '{"id":"a","title":"A","blocks":[{"type":"paragraph","text":"again"}]}\n');
+      await session.settle();
+      const result = await session.flush({ ...batch({ json: tidied }, ['a']), seenSeq: 0 });
+      expect(result.stale).toEqual(['a']);
+      expect(repaired).toEqual([]);
+    } finally {
+      session.close();
+    }
+  });
+});

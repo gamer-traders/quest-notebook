@@ -101,6 +101,17 @@ test('a page written back for a missing field doesn’t rewrite its drawings', a
   expect(save.sidecars).toEqual({});
 });
 
+test('a page from disk tidied by the window (fields filled in, inline strokes moved to their file) is saved as a repair', async () => {
+  const inline = { blocks: [{ type: 'paragraph', text: 'bee' }, { type: 'drawing', id: 'd1', strokes: [{ tool: 'pen', points: '10,10,0.5 60,60,0.5' }] }] };
+  applyDisk({ seq: 1, spaces: snapshot.spaces, journalSpaceId: null, pages: [{ ...snapshot.pages[1], file: inline }, pageC], removed: [] });
+  await flushWorkspace();
+  const saves = batches.flatMap((b) => b.saves);
+  expect(saves.map((s) => s.id)).toEqual(['b']);
+  expect(Object.keys(saves[0].sidecars)).toEqual(['drawing-d1.svg']);
+  expect(JSON.parse(saves[0].json!).blocks[1]).toEqual({ type: 'drawing', id: 'd1', file: 'drawing-d1.svg' });
+  expect(batches.flatMap((b) => b.repairs ?? [])).toEqual(['b']);
+});
+
 test('an outside change to a drawing reaches a page that is being typed on', async () => {
   applyDisk({ seq: 1, spaces: snapshot.spaces, journalSpaceId: null, pages: [{ ...snapshot.pages[1], file: drawingPageFile('bee'), drawings: { 'drawing-d1.svg': handmade } }], removed: [] });
   await flushWorkspace();

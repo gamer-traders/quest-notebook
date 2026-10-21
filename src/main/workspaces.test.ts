@@ -154,3 +154,20 @@ test('closing the app mid-turn kills claude without reporting anything, and clos
   expect(s.workspaces.session).toBeNull();
   s.workspaces.close();
 });
+
+test("the window's tidy-up of a page Claude wrote reaches the open workspace's claude, so undo has no conflict", async () => {
+  const s = await setup();
+  expect((await s.workspaces.open(s.first)).ok).toBe(true);
+  const service = s.workspaces.claude!;
+  const session = s.workspaces.session!;
+  const sent = await service.send(request('Make a page with no position'));
+  if ('error' in sent) throw new Error(sent.error);
+  await waitFor('the reply', () => s.events.find((e) => e.kind === 'done' && e.messageId === sent.messageId));
+
+  const markets = session.snapshot.spaces.find((sp) => sp.name === 'Markets')!;
+  const tidied = '{\n  "id": "rng00001",\n  "title": "R",\n  "position": 1,\n  "blocks": []\n}\n';
+  const saves = [{ id: 'rng00001', spaceId: markets.id, parentId: null, title: 'R', json: tidied, sidecars: {} }];
+  expect((await session.flush({ spaces: session.snapshot.spaces, createdSpaces: [], deletedSpaces: [], journalSpaceId: null, deletes: [], saves, repairs: ['rng00001'] })).ok).toBe(true);
+  expect(await service.undo(sent.chatId, sent.messageId, null, false)).toEqual({ undone: ['Markets/R.json'], conflicts: [] });
+  expect(await exists(join(s.first, 'Markets/R.json'))).toBe(false);
+});

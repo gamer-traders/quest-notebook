@@ -20,6 +20,15 @@ const B_TEXT = '{"id":"b","title":"Bee","position":1,"blocks":[]}\n';
 const A_AFTER = `${JSON.stringify({ ...JSON.parse(A_TEXT), blocks: [...JSON.parse(A_TEXT).blocks, { type: 'paragraph', text: 'Hello from Claude.' }] }, null, 2)}\n`;
 const DRAWING = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path d="M1 1 L9 9"/></svg>\n';
 const P_TEXT = `${JSON.stringify({ id: 'np000001', title: 'P', position: 0, blocks: [] }, null, 2)}\n`;
+// "no position": a page without a position, and the app's tidy-up of it with the position filled in.
+const R_FILE = { id: 'rng00001', title: 'R', created: '2026-10-21T00:00:00.000Z', updated: '2026-10-21T00:00:00.000Z', blocks: [] };
+const R_TEXT = `${JSON.stringify(R_FILE, null, 2)}\n`;
+const R_TIDIED = `${JSON.stringify({ id: R_FILE.id, title: 'R', position: 2, created: R_FILE.created, updated: R_FILE.updated, blocks: [] }, null, 2)}\n`;
+// "inline strokes": a drawing block with its strokes in the page, and the app's tidy-up moving them to the drawing's file.
+const INLINE = { type: 'drawing', id: 'd1', height: 200, strokes: [{ tool: 'pen', color: 'ink', size: 3, points: '10,10,0.5 60,60,0.5' }] };
+const A_INLINE = `${JSON.stringify({ ...JSON.parse(A_TEXT), blocks: [...JSON.parse(A_TEXT).blocks, INLINE] }, null, 2)}\n`;
+const A_TIDIED = `${JSON.stringify({ ...JSON.parse(A_TEXT), created: R_FILE.created, updated: R_FILE.updated, blocks: [...JSON.parse(A_TEXT).blocks, { type: 'drawing', id: 'd1', file: 'drawing-d1.svg' }] }, null, 2)}\n`;
+const D1_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 200"><path data-points="10,10,0.5 60,60,0.5"/></svg>\n';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const exists = (abs: string) => stat(abs).then(() => true, () => false);
@@ -96,7 +105,13 @@ async function setup(over: { locate?: () => Promise<string | null>; stopGraceMs?
   const children: ChildProcess[] = [];
   const strays: number[] = [];
   let service: ClaudeService | undefined;
-  const session = await WorkspaceSession.open(root, false, { change: (d) => deltas.push(d), lost: () => {}, fileChanges: (c) => service?.fileChanges(c) }, trash, 60_000);
+  const session = await WorkspaceSession.open(
+    root,
+    false,
+    { change: (d) => deltas.push(d), lost: () => {}, fileChanges: (c) => service?.fileChanges(c), repaired: (f) => service?.repaired(f) },
+    trash,
+    60_000,
+  );
   service = new ClaudeService(root, session, {
     locate: over.locate ?? (async () => FAKE),
     spawn: spawnVia(children),
@@ -821,5 +836,152 @@ describe("only Claude's own changes", () => {
     expect(await again.undo(chatId, messageId, null, false)).toEqual({ undone: ['Markets/A.json', 'Markets/A/drawing-x1.svg'], conflicts: [] });
     expect(await readFile(join(s.root, 'Markets/A.json'), 'utf8')).toBe(A_TEXT);
     expect(await exists(join(s.root, 'Markets/A'))).toBe(false);
+  });
+});
+
+describe("the app's own tidy-up of a page Claude wrote", () => {
+  /** A save from the window, as sync sends it: named in `repairs` when it only fills in or tidies the page, not for an edit. */
+  function save(s: Setup, page: { id: string; title: string; json: string; sidecars?: Record<string, string> }, opts: { repair: boolean }) {
+    const markets = s.session.snapshot.spaces.find((sp) => sp.name === 'Markets')!;
+    return s.session.flush({
+      spaces: s.session.snapshot.spaces,
+      createdSpaces: [],
+      deletedSpaces: [],
+      journalSpaceId: null,
+      deletes: [],
+      saves: [{ id: page.id, spaceId: markets.id, parentId: null, title: page.title, json: page.json, sidecars: page.sidecars ?? {} }],
+      ...(opts.repair ? { repairs: [page.id] } : {}),
+    });
+  }
+
+  const textOf = (s: Setup, path: string) => readFile(join(s.root, path), 'utf8').catch(() => null);
+
+  /** A turn whose prompt says "hold" finishes when this is called. */
+  function holding(s: Setup): () => Promise<void> {
+    const go = `${s.log}.go`;
+    withEnv({ FAKE_GO: go });
+    return () => writeFile(go, '');
+  }
+
+  /** The turn has written `path` and seen it, as the watcher would report it. */
+  async function written(s: Setup, path: string, text: string): Promise<void> {
+    await waitFor(`${path} to be written`, async () => (await textOf(s, path)) === text);
+    await s.session.settle();
+  }
+
+  const chatChanges = async (s: Setup, chatId: string) => (await readChat(s.root, chatId))?.messages[1].changes;
+
+  test('a page tidied during the turn is recorded as tidied, and undo trashes it with no conflict', async () => {
+    const s = await setup();
+    const go = holding(s);
+    const { chatId, messageId } = await sendOk(s, 'Make a page with no position, and hold');
+    await written(s, 'Markets/R.json', R_TEXT);
+    expect((await save(s, { id: 'rng00001', title: 'R', json: R_TIDIED }, { repair: true })).ok).toBe(true);
+    await go();
+
+    const message = await doneOf(s, messageId);
+    expect(message.changes).toEqual([{ path: 'Markets/R.json', pageId: 'rng00001', kind: 'created', drawing: false, before: null, after: R_TIDIED }]);
+    expect(await s.service.undo(chatId, messageId, null, false)).toEqual({ undone: ['Markets/R.json'], conflicts: [] });
+    expect(await exists(join(s.root, 'Markets/R.json'))).toBe(false);
+  });
+
+  test('a page tidied after the reply is done: the chat file follows, and undo has no conflict', async () => {
+    const s = await setup();
+    const { chatId, messageId } = await sendOk(s, 'Make a page with no position');
+    const message = await doneOf(s, messageId);
+    expect(message.changes).toEqual([{ path: 'Markets/R.json', pageId: 'rng00001', kind: 'created', drawing: false, before: null, after: R_TEXT }]);
+
+    expect((await save(s, { id: 'rng00001', title: 'R', json: R_TIDIED }, { repair: true })).ok).toBe(true);
+    await waitFor('the chat to follow the tidy-up', async () => (await chatChanges(s, chatId))?.[0].after === R_TIDIED);
+    expect(await s.service.undo(chatId, messageId, null, false)).toEqual({ undone: ['Markets/R.json'], conflicts: [] });
+    expect(await exists(join(s.root, 'Markets/R.json'))).toBe(false);
+  });
+
+  test('an edit by the owner is not a tidy-up: undo still asks', async () => {
+    const s = await setup();
+    const { chatId, messageId } = await sendOk(s, 'Make a page with no position');
+    await doneOf(s, messageId);
+
+    expect((await save(s, { id: 'rng00001', title: 'R', json: R_TIDIED }, { repair: false })).ok).toBe(true);
+    expect(await s.service.undo(chatId, messageId, null, false)).toEqual({ undone: [], conflicts: ['Markets/R.json'] });
+    expect((await chatChanges(s, chatId))?.[0].after).toBe(R_TEXT);
+    expect(await textOf(s, 'Markets/R.json')).toBe(R_TIDIED);
+  });
+
+  test('a tidy-up of what the owner changed since is not moved into the reply', async () => {
+    const s = await setup();
+    const { chatId, messageId } = await sendOk(s, 'Make a page with no position');
+    await doneOf(s, messageId);
+
+    const owner = R_TEXT.replace('"blocks": []', '"blocks": [{ "type": "paragraph", "text": "mine" }]');
+    await save(s, { id: 'rng00001', title: 'R', json: owner }, { repair: false });
+    await save(s, { id: 'rng00001', title: 'R', json: R_TIDIED }, { repair: true });
+    expect(await s.service.undo(chatId, messageId, null, false)).toEqual({ undone: [], conflicts: ['Markets/R.json'] });
+  });
+
+  test('inline strokes moved to a drawing file during the turn: undo restores the page byte for byte and trashes the drawing', async () => {
+    const s = await setup();
+    const go = holding(s);
+    const { chatId, messageId } = await sendOk(s, 'Draw with inline strokes, and hold');
+    await written(s, 'Markets/A.json', A_INLINE);
+    expect((await save(s, { id: 'a', title: 'A', json: A_TIDIED, sidecars: { 'drawing-d1.svg': D1_SVG } }, { repair: true })).ok).toBe(true);
+    expect(await textOf(s, 'Markets/A/drawing-d1.svg')).toBe(D1_SVG);
+    await go();
+
+    const message = await doneOf(s, messageId);
+    expect(message.changes).toEqual([
+      { path: 'Markets/A.json', pageId: 'a', kind: 'edited', drawing: false, before: A_TEXT, after: A_TIDIED },
+      { path: 'Markets/A/drawing-d1.svg', pageId: 'a', kind: 'created', drawing: true, before: null, after: D1_SVG },
+    ]);
+    expect(await s.service.undo(chatId, messageId, null, false)).toEqual({ undone: ['Markets/A.json', 'Markets/A/drawing-d1.svg'], conflicts: [] });
+    expect(await textOf(s, 'Markets/A.json')).toBe(A_TEXT);
+    expect(await exists(join(s.root, 'Markets/A'))).toBe(false);
+  });
+
+  test('inline strokes moved to a drawing file after the reply is done: undo restores the page and trashes the drawing', async () => {
+    const s = await setup();
+    const { chatId, messageId } = await sendOk(s, 'Draw with inline strokes');
+    expect((await doneOf(s, messageId)).changes).toEqual([{ path: 'Markets/A.json', pageId: 'a', kind: 'edited', drawing: false, before: A_TEXT, after: A_INLINE }]);
+
+    await save(s, { id: 'a', title: 'A', json: A_TIDIED, sidecars: { 'drawing-d1.svg': D1_SVG } }, { repair: true });
+    await waitFor('the chat to follow the tidy-up', async () => (await chatChanges(s, chatId))?.length === 2);
+    expect(await chatChanges(s, chatId)).toEqual([
+      { path: 'Markets/A.json', pageId: 'a', kind: 'edited', drawing: false, before: A_TEXT, after: A_TIDIED },
+      { path: 'Markets/A/drawing-d1.svg', pageId: 'a', kind: 'created', drawing: true, before: null, after: D1_SVG },
+    ]);
+    expect(await s.service.undo(chatId, messageId, null, false)).toEqual({ undone: ['Markets/A.json', 'Markets/A/drawing-d1.svg'], conflicts: [] });
+    expect(await textOf(s, 'Markets/A.json')).toBe(A_TEXT);
+    expect(await exists(join(s.root, 'Markets/A'))).toBe(false);
+  });
+
+  test('a tidy-up while a later turn runs in the same chat reaches the earlier reply once the turn ends, and the later reply is kept', async () => {
+    const s = await setup();
+    const first = await sendOk(s, 'Make a page with no position');
+    await doneOf(s, first.messageId);
+
+    const second = await sendOk(s, 'sleep', { chatId: first.chatId });
+    await fakeReady(s);
+    await save(s, { id: 'rng00001', title: 'R', json: R_TIDIED }, { repair: true });
+    await s.service.stop();
+    await doneOf(s, second.messageId);
+
+    await waitFor('the chat to follow the tidy-up', async () => (await chatChanges(s, first.chatId))?.[0].after === R_TIDIED);
+    expect((await readChat(s.root, first.chatId))?.messages.map((m) => m.id)).toEqual([expect.any(String), first.messageId, expect.any(String), second.messageId]);
+    expect(await s.service.undo(first.chatId, first.messageId, null, false)).toEqual({ undone: ['Markets/R.json'], conflicts: [] });
+  });
+
+  test('a path already undone is left as it is', async () => {
+    const s = await setup();
+    const { chatId, messageId } = await sendOk(s, 'Make a page with no position');
+    await doneOf(s, messageId);
+    expect(await s.service.undo(chatId, messageId, null, false)).toEqual({ undone: ['Markets/R.json'], conflicts: [] });
+    const before = await readFile(join(s.root, CHATS_DIR, `${chatId}.json`), 'utf8');
+
+    // The page comes back as Claude left it (from another app, say), and the window tidies it.
+    await writeFile(join(s.root, 'Markets/R.json'), R_TEXT);
+    await s.session.settle();
+    await save(s, { id: 'rng00001', title: 'R', json: R_TIDIED }, { repair: true });
+    await s.service.undo(chatId, messageId, null, false);
+    expect(await readFile(join(s.root, CHATS_DIR, `${chatId}.json`), 'utf8')).toBe(before);
   });
 });

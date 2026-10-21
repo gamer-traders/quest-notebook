@@ -17,6 +17,10 @@
     "two parts"      text, a Read, then more text
     "new space"      creates NewSpace/P.json with a Write
     "sub page"       creates Markets/Folder/X.json with a Write, in a folder that wasn't there
+    "no position"    creates Markets/R.json with a Write: a page with no position, as the app would fill in
+    "inline strokes" adds a drawing block with its strokes inline to Markets/A.json with an Edit, as the app would
+                     move to a drawing file
+      "hold"           either of these two waits for the file FAKE_GO to exist before it finishes
     "fail auth"      a failed login result, exit 1
     "refuse"         prints denied.jsonl
     "odd session"    a reply whose session id isn't a UUID
@@ -26,9 +30,10 @@
     FAKE_LOG=<file>       a turn first writes { argv, envKeys, path } there (keep it outside the workspace)
     FAKE_LOGGED_OUT=1     `auth status` says loggedIn: false
     FAKE_AUTH_BROKEN=1    `auth status` prints something that isn't JSON
+    FAKE_GO=<file>        a "hold" turn finishes once this file exists
 */
 import { spawn } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -39,6 +44,8 @@ const args = process.argv.slice(2);
 const PARAGRAPH = { type: 'paragraph', text: 'Hello from Claude.' };
 const DRAWING = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path d="M1 1 L9 9"/></svg>\n';
 const OTHER = { type: 'paragraph', text: 'Written by another app.' };
+const R_PAGE = `${JSON.stringify({ id: 'rng00001', title: 'R', created: '2026-10-21T00:00:00.000Z', updated: '2026-10-21T00:00:00.000Z', blocks: [] }, null, 2)}\n`;
+const INLINE = { type: 'drawing', id: 'd1', height: 200, strokes: [{ tool: 'pen', color: 'ink', size: 3, points: '10,10,0.5 60,60,0.5' }] };
 
 const print = (lines, then) => process.stdout.write(lines.map((line) => `${line}\n`).join(''), then);
 
@@ -149,6 +156,33 @@ function turn() {
       mkdirSync(join(cwd, 'Markets/Folder'), { recursive: true });
       writeFileSync(join(cwd, 'Markets/Folder/X.json'), page);
       print([delta('I made a sub-page.'), success('I made a sub-page.')]);
+    });
+    return;
+  }
+
+  // Ends the turn with this text: at once, or for "hold" once FAKE_GO exists.
+  const finish = (text) => {
+    const end = () => print([textStart(), delta(text), success(text)]);
+    if (!prompt.includes('hold')) return end();
+    const timer = setInterval(() => {
+      if (!existsSync(process.env.FAKE_GO ?? '')) return;
+      clearInterval(timer);
+      end();
+    }, 10);
+  };
+
+  if (prompt.includes('no position')) {
+    print([init, tool('Write', 'toolu_pos_1', { file_path: `${cwd}/Markets/R.json`, content: R_PAGE })], () => {
+      writeFileSync(join(cwd, 'Markets/R.json'), R_PAGE);
+      finish('I made a page.');
+    });
+    return;
+  }
+
+  if (prompt.includes('inline strokes')) {
+    print([init, tool('Edit', 'toolu_ink_1', { file_path: `${cwd}/Markets/A.json`, old_string: ']', new_string: ', …]' })], () => {
+      appendTo('Markets/A.json', INLINE);
+      finish('I drew on the page.');
     });
     return;
   }

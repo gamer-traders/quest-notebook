@@ -15,12 +15,12 @@ import {
   type SendRequest,
   type UndoResult,
 } from '@shared/ipc';
-import type { WorkspaceSession } from '../workspace/session';
+import type { RepairedFile, WorkspaceSession } from '../workspace/session';
 import { chatTitle, deleteChat, listChats, newChatId, readChat, writeChat } from './chats';
 import { buildPrompt, claudeArgs, claudeEnv, isSessionId } from './command';
 import { LineSplitter, parseStreamLine, type StreamItem } from './events';
 import { WORKSPACE_GUIDE } from './guide';
-import { TurnChanges } from './turns';
+import { TurnChanges, repairChanges } from './turns';
 import { undoChanges } from './undo';
 
 export interface ClaudeDeps {
@@ -49,9 +49,18 @@ const MAX_MESSAGE = 100_000;
 const STDERR_KEEP = 4096;
 const STATUS_TIMEOUT_MS = 10_000;
 const STATUS_OUTPUT_KEEP = 65_536;
+/** How many finished replies a tidy-up by the app can still reach. */
+const KEEP_FINISHED = 10;
 
 type Done = Extract<StreamItem, { kind: 'done' }>;
 type TurnEvent = { kind: 'text'; text: string } | { kind: 'action'; action: ChatAction } | { kind: 'done'; message: ChatMessage };
+/** A finished reply that recorded changes, and the paths it recorded them at. */
+interface FinishedReply {
+  chatId: string;
+  messageId: string;
+  paths: Set<string>;
+}
+
 interface Exit {
   code: number | null;
   signal: NodeJS.Signals | null;
@@ -70,6 +79,8 @@ interface Turn {
   /** Space folder names when the turn started. */
   spaces: Set<string>;
   changes: TurnChanges;
+  /** Drawing files the app made while tidying a page this turn changed, and that page's path: they go where the page goes. */
+  repairDrawings: Map<string, string>;
   /** File changes count until the reply's list of them is made. */
   recording: boolean;
   child: ChildProcess | null;
@@ -95,6 +106,10 @@ const isString = (v: unknown): v is string => typeof v === 'string';
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const firstLine = (text: string) => text.split('\n').map((line) => line.trim()).find((line) => line !== '') ?? '';
 const isRunning = (child: ChildProcess) => child.pid !== undefined && child.exitCode === null && child.signalCode === null;
+
+/** Whether a reply that recorded these paths may have left this file: one of them, or a file in one of its pages' folders. */
+const mayHaveLeft = (paths: Set<string>, path: string) =>
+  paths.has(path) || [...paths].some((p) => /\.json$/i.test(p) && path.startsWith(`${p.slice(0, -'.json'.length)}/`));
 
 /**
  * Whether undo may write a recorded change: a page file or a drawing file inside a space folder, never the top of
@@ -159,8 +174,12 @@ export class ClaudeService {
   private claudePath: string | null = null;
   /** The last turn failed because the CLI wasn't logged in. */
   private loggedOut = false;
-  /** Undos run one after another, and a turn starts only after them. */
+  /** Undos run one after another, and a turn starts only after them. Updates of finished replies and deletes of chats take turns with them. */
   private undoQueue: Promise<unknown> = Promise.resolve();
+  /** The last few replies that recorded changes, oldest first. */
+  private finished: FinishedReply[] = [];
+  /** Tidy-ups that came while a send or turn was writing its chat, for the finished replies once it's over. */
+  private deferredRepairs: RepairedFile[][] = [];
 
   constructor(
     private readonly root: string,
@@ -224,6 +243,7 @@ export class ClaudeService {
         realRoot,
         spaces: new Set(this.session.snapshot.spaces.map((s) => s.name)),
         changes: new TurnChanges(),
+        repairDrawings: new Map(),
         recording: true,
         child: null,
         splitter: new LineSplitter(),
@@ -252,6 +272,7 @@ export class ClaudeService {
         this.busy = false;
         this.activeChatId = null;
         this.stopRequested = false;
+        this.repairDeferred();
       }
     }
   }
@@ -389,7 +410,8 @@ export class ClaudeService {
   /**
    * The reply as the turn left it: refusals marked, a Write on a file that was there counted as an edit, and only the
    * changes to files Claude itself wrote. A file another app changed during the turn isn't Claude's, so it's never undone.
-   * One more is Claude's doing: the page the app made for a new folder Claude put a page in, so undo leaves no empty page.
+   * More are Claude's doing: the page the app made for a new folder Claude put a page in, so undo leaves no empty page,
+   * and a drawing file the app made while tidying a page Claude wrote, so undo leaves no drawing behind.
    */
   private reply(turn: Turn, error: string | undefined): ChatMessage {
     const refused = new Set(turn.done?.refused ?? []);
@@ -399,7 +421,8 @@ export class ClaudeService {
     const madeByClaude = all.filter((c) => written.has(c.path) && c.kind === 'created').map((c) => c.path);
     const isFolderPage = (c: FileChange) =>
       c.kind === 'created' && !c.drawing && /\.json$/i.test(c.path) && madeByClaude.some((path) => path.startsWith(`${c.path.slice(0, -'.json'.length)}/`));
-    const changes = all.filter((c) => written.has(c.path) || isFolderPage(c));
+    const own = new Set(all.filter((c) => written.has(c.path) || isFolderPage(c)).map((c) => c.path));
+    const changes = all.filter((c) => own.has(c.path) || own.has(turn.repairDrawings.get(c.path) ?? ''));
     const kinds = new Map(changes.map((c) => [c.path, c.kind]));
     for (const action of turn.actions) {
       if (action.verb === 'created' && action.path !== undefined && kinds.get(action.path) === 'edited') action.verb = 'edited';
@@ -440,6 +463,7 @@ export class ClaudeService {
       turn.saving = true;
       try {
         await writeChat(this.root, chat);
+        this.remember(chat.id, message);
       } catch (writeError) {
         console.error('Saving the chat failed:', writeError);
       }
@@ -453,6 +477,69 @@ export class ClaudeService {
         this.busy = false;
         this.activeChatId = null;
         this.stopRequested = false;
+        this.repairDeferred();
+      }
+    }
+  }
+
+  /** A reply now in its chat file, which a tidy-up by the app may still reach. */
+  private remember(chatId: string, message: ChatMessage): void {
+    if (!message.changes?.length) return;
+    this.finished.push({ chatId, messageId: message.id, paths: new Set(message.changes.map((c) => c.path)) });
+    if (this.finished.length > KEEP_FINISHED) this.finished.shift();
+  }
+
+  /**
+   * Called with files the window rewrote only to fill in or tidy what an outside write left, such as a page without a
+   * position, or strokes moved out of a page into a drawing file. The owner changed nothing, so where the tidy-up lands
+   * on what a turn left, it becomes part of that turn's change, and undo doesn't take it for an edit. A running turn takes
+   * it in at once; a finished reply's chat file is updated in turn with undos. Nothing is sent to the window: the chat
+   * file is what undo reads.
+   */
+  repaired(files: RepairedFile[]): void {
+    if (this.closed || files.length === 0) return;
+    const turn = this.turn;
+    if (turn?.recording) for (const { path, page } of turn.changes.repair(files)) turn.repairDrawings.set(path, page);
+    // A send or turn writes its chat from its own copy, read when it started: finished replies wait until it's over.
+    if (this.busy) this.deferredRepairs.push(files);
+    else this.repairFinished(files);
+  }
+
+  private repairDeferred(): void {
+    for (const files of this.deferredRepairs.splice(0)) this.repairFinished(files);
+  }
+
+  private repairFinished(files: RepairedFile[]): void {
+    if (this.closed) return;
+    const replies = this.finished.filter((r) => files.some((f) => mayHaveLeft(r.paths, f.path)));
+    if (replies.length === 0) return;
+    const run = this.undoQueue.then(() => this.repairReplies(replies, files));
+    this.undoQueue = run.catch(() => {});
+  }
+
+  /** Moves these replies' recorded changes over the tidy-up, leaving paths already undone, and writes each chat that changed. */
+  private async repairReplies(replies: FinishedReply[], files: RepairedFile[]): Promise<void> {
+    const byChat = new Map<string, Set<string>>();
+    for (const r of replies) byChat.set(r.chatId, (byChat.get(r.chatId) ?? new Set<string>()).add(r.messageId));
+    for (const [chatId, messageIds] of byChat) {
+      if (this.closed) return;
+      try {
+        const chat = await readChat(this.root, chatId);
+        if (!chat) continue;
+        let changed = false;
+        for (const message of chat.messages) {
+          if (message.role !== 'assistant' || !messageIds.has(message.id) || !Array.isArray(message.changes)) continue;
+          const recorded: unknown[] = message.changes;
+          const undone = new Set(Array.isArray(message.undone) ? message.undone.filter(isString) : []);
+          const out = repairChanges(recorded.filter(isUndoable), files, undone);
+          if (!out.changed) continue;
+          // Anything in a hand-edited chat file that undo wouldn't touch stays as it is.
+          message.changes = [...(recorded.filter((c) => !isUndoable(c)) as FileChange[]), ...out.changes];
+          changed = true;
+        }
+        if (changed && !this.closed) await writeChat(this.root, chat);
+      } catch (error) {
+        console.error('Updating a reply after the app tidied its pages failed:', error);
       }
     }
   }
@@ -635,6 +722,9 @@ export class ClaudeService {
   async deleteChat(id: string): Promise<void> {
     if (this.closed) throw new Error(CLOSED);
     if (id === this.activeChatId) throw new Error('Claude is answering in this chat');
-    await deleteChat(this.root, id, this.deps.trash);
+    // After the undos and reply updates already queued, so none of them writes the chat back.
+    const run = this.undoQueue.then(() => deleteChat(this.root, id, this.deps.trash));
+    this.undoQueue = run.catch(() => {});
+    await run;
   }
 }
