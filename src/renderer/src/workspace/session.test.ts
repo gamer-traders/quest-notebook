@@ -87,3 +87,16 @@ test('a drawing changed on disk gets its picture redrawn, without the page file 
   expect(save.json).toBeUndefined();
   expect(Object.keys(save.sidecars)).toEqual(['drawing-d1.svg']);
 });
+
+test('a page whose last drawing was removed on disk gets its picture removed', async () => {
+  const drawing = { type: 'drawing', id: 'd1', height: 400, background: 'blank', strokes: [{ tool: 'pen', color: 'ink', size: 3, pressure: true, points: '10,10,0.5 90,90,0.5' }] };
+  applyDisk({ seq: 1, spaces: snapshot.spaces, journalSpaceId: null, pages: [{ ...snapshot.pages[1], file: { ...file('b', 'B', 'bee'), blocks: [drawing] } }], removed: [] });
+  await flushWorkspace();
+  batches = [];
+  applyDisk({ seq: 2, spaces: snapshot.spaces, journalSpaceId: null, pages: [{ ...snapshot.pages[1], file: file('b', 'B', 'no drawing now') }], removed: [] });
+  await flushWorkspace();
+  const save = batches.flatMap((b) => b.saves).find((s) => s.id === 'b')!;
+  expect(save).toBeDefined();
+  expect(save.json).toBeUndefined();
+  expect(save.sidecars).toEqual({});
+});

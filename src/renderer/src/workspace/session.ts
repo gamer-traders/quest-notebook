@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { DiskDelta, OpenResult, WorkspaceSnapshot } from '@shared/ipc';
+import type { Notebook } from '../types';
 import { useStore } from '../store';
 import { seedFor } from '../lib/seed';
 import { childrenOf } from '../page/tree';
@@ -57,9 +58,11 @@ export function applyDisk(delta: DiskDelta): void {
   sync.applyFromDisk(() => useStore.getState().applyDiskDelta(filtered), delta.seq);
   // Pages renamed through their file name, or missing fields, are written back whole.
   if (repaired.size) sync.markDirty(repaired);
-  // Drawings changed on disk get their pictures redrawn.
+  // Drawings changed on disk get their pictures redrawn, and a page whose drawings went has its pictures removed.
+  const hasDrawing = (nb: Notebook | undefined) => Object.values(nb?.items ?? {}).some((i) => i.type === 'drawing');
+  const before = new Map(current.map((n) => [n.id, n]));
   const after = new Map(useStore.getState().notebooks.map((n) => [n.id, n]));
-  const drawn = filtered.pages.filter((p) => Object.values(after.get(p.id)?.items ?? {}).some((i) => i.type === 'drawing')).map((p) => p.id);
+  const drawn = filtered.pages.filter((p) => hasDrawing(after.get(p.id)) || hasDrawing(before.get(p.id))).map((p) => p.id);
   if (drawn.length) sync.redrawPictures(drawn);
 
   // A page being edited keeps its edit, but goes where its file went, so the edit is saved there.
