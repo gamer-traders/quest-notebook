@@ -128,8 +128,9 @@ export async function applyFlush(root: string, index: ScanIndex, batch: FlushBat
   for (const save of ordered) {
     try {
       const entry = index.pages.get(save.id);
-      // Pictures alone are only redrawn for a page that's on disk.
-      if (save.json === undefined && !entry) continue;
+      // Pictures alone are only redrawn for a page that's on disk. Main doesn't have this one, so the window
+      // plans it again, as a whole page.
+      if (save.json === undefined && !entry) throw new StaleSave(save.id);
       if (entry?.error) throw new Error('Page file is unreadable');
       const space = spaceFolder.get(save.spaceId);
       if (space === undefined) throw new Error(`The space for “${save.title}” isn't in this workspace`);

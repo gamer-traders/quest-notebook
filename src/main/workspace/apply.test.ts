@@ -265,10 +265,10 @@ test('a save with pictures only rewrites the pictures and leaves the page file a
   expect(await read('Markets/Page/drawing-d1.svg')).toBe('<svg>2</svg>');
 });
 
-test('a pictures-only save for a page main has never seen does nothing', async () => {
+test('a pictures-only save for a page main doesn’t have writes nothing, and is refused as stale so the window sends the page', async () => {
   await setup({ 'Markets/': '' });
   const result = await apply({ saves: [{ id: 'ghost', spaceId: space('Markets'), parentId: null, title: 'Ghost', sidecars: { 'drawing-d1.svg': '<svg/>' } }] });
-  expect(result.ok).toBe(true);
+  expect(result).toEqual({ ok: true, paths: {}, stale: ['ghost'] });
   expect(await list('Markets')).toEqual([]);
 });
 

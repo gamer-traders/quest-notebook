@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { FlushBatch, QuestApi, WorkspaceSnapshot } from '@shared/ipc';
 import { useStore } from '../store';
 import { snapshotToState } from './load';
+import { drawingToSvg } from '../drawing/svg';
 import { startSync, useSaveStatus, type SyncHandle } from './sync';
 
 const file = (id: string, title: string, text = '') => ({
@@ -237,4 +238,25 @@ test('a space deleted or renamed in a save that failed is sent again', async () 
   await vi.advanceTimersByTimeAsync(3000);
   expect(batches).toHaveLength(3);
   expect(batches[2]).toMatchObject({ createdSpaces: [], deletedSpaces: [id], spaces: [{ id: 'sm', name: 'Crypto' }] });
+});
+
+test('a drawing-only save refused as stale is sent next time as the whole page, with its drawing', async () => {
+  sync.stop();
+  vi.useFakeTimers();
+  const stroke = { id: 's', tool: 'pen' as const, color: 'ink' as const, size: 3, pressure: true, points: [10, 10, 0.5, 60, 60, 0.5] };
+  const drawn = { ...file('a', 'A'), blocks: [{ type: 'drawing', id: 'd1', file: 'drawing-d1.svg' }] };
+  const record = { ...snapshot.pages[0], file: drawn, drawings: { 'drawing-d1.svg': drawingToSvg({ height: 400, background: 'blank', strokes: [stroke] }) } };
+  const loaded = snapshotToState({ ...snapshot, pages: [record] });
+  useStore.getState().loadWorkspace('/w', 'W', loaded);
+  sync = startSync(api, useStore, loaded.repaired, loaded.drawingsToWrite);
+
+  flushResult = async () => ({ ok: true, paths: {}, stale: ['a'] });
+  sync.writeDrawings('a', ['d1']);
+  await sync.flush();
+  expect(batches[0].saves[0].json).toBeUndefined();
+  flushResult = async () => ({ ok: true, paths: { a: 'Markets/A.json' } });
+  await vi.advanceTimersByTimeAsync(400);
+  expect(batches).toHaveLength(2);
+  expect(batches[1].saves[0].json).toBeDefined();
+  expect(Object.keys(batches[1].saves[0].sidecars)).toEqual(['drawing-d1.svg']);
 });
