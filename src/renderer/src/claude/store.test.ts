@@ -38,12 +38,14 @@ beforeEach(() => {
 
 const text = (t: string, messageId = 'm1'): ClaudeEvent => ({ chatId: 'c1', messageId, kind: 'text', text: t });
 
-test('5,000 text events append quickly and join correctly', async () => {
+// Appending is linear: 20,000 pieces take well under 100 ms alone, while copying the list on each one would take seconds.
+// The limit leaves room for a busy machine running the whole suite.
+test('20,000 text events append quickly and join correctly', async () => {
   await useClaude.getState().send('go', null);
   const start = performance.now();
-  for (let i = 0; i < 5000; i++) handler(text('x'));
-  expect(performance.now() - start).toBeLessThan(50);
-  expect(useClaude.getState().streaming.text.join('')).toBe('x'.repeat(5000));
+  for (let i = 0; i < 20000; i++) handler(text('x'));
+  expect(performance.now() - start).toBeLessThan(500);
+  expect(useClaude.getState().streaming.text.join('')).toBe('x'.repeat(20000));
 });
 
 test('done clears running and streaming, and the chat is what readChat returns', async () => {
