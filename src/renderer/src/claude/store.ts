@@ -235,7 +235,13 @@ export const useClaude = create<ClaudeState>((set, get) => {
         const actions = at < 0 ? [...streaming.actions, e.action] : streaming.actions.map((a, i) => (i === at ? e.action : a));
         set({ streaming: { text: streaming.text, actions } });
       } else {
-        set({ running: null, streaming: emptyStreaming() });
+        // The reply shows at once, so it doesn't blink out while the saved chat is read back.
+        const cur = get().chat;
+        set({
+          running: null,
+          streaming: emptyStreaming(),
+          ...(cur && cur.id === e.chatId ? { chat: { ...cur, messages: [...cur.messages, e.message] } } : {}),
+        });
         void (async () => {
           let chat: Chat | null = null;
           try {
@@ -243,11 +249,7 @@ export const useClaude = create<ClaudeState>((set, get) => {
           } catch {
             chat = null;
           }
-          if (!chat) {
-            const cur = get().chat;
-            if (cur && cur.id === e.chatId) chat = { ...cur, messages: [...cur.messages, e.message] };
-          }
-          if (chat) set({ chat });
+          if (chat && get().chat?.id === e.chatId) set({ chat });
           try {
             set({ chats: await api!.listChats() });
           } catch {

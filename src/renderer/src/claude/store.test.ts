@@ -62,8 +62,10 @@ test('done clears running and streaming, and the chat is what readChat returns',
 test('done falls back to appending the message when the chat cannot be read', async () => {
   await useClaude.getState().send('go', null);
   handler({ chatId: 'c1', messageId: 'm1', kind: 'done', message: { ...reply('m1'), error: 'boom' } });
-  await vi.waitFor(() => expect(useClaude.getState().chat?.messages.map((m) => m.id)).toEqual([expect.any(String), 'm1']));
-  expect(api.status).toHaveBeenCalled();
+  // The reply shows at once, before the chat is read back.
+  expect(useClaude.getState().chat?.messages.map((m) => m.id)).toEqual([expect.any(String), 'm1']);
+  await vi.waitFor(() => expect(api.status).toHaveBeenCalled());
+  expect(useClaude.getState().chat?.messages.map((m) => m.id)).toEqual([expect.any(String), 'm1']);
 });
 
 test('send ignores a blank message and a turn already running, and flushes first', async () => {
