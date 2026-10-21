@@ -223,7 +223,7 @@ test('a sibling whose extension is in capitals, or whose accents are decomposed,
   expect(JSON.parse(await read('Markets/Cafe\u0301.json')).id).toBe('c');
 });
 
-test('a page’s drawing pictures are written in its folder, rewritten only when they change, and removed with the drawing', async () => {
+test('a page’s drawing files are written in its folder, rewritten only when they change, and trashed when removed', async () => {
   await setup({ 'Markets/': '' });
   await apply({ saves: [{ ...save('p', 'Page'), sidecars: { 'drawing-d1.svg': '<svg>1</svg>' } }] });
   expect(await read('Markets/Page/drawing-d1.svg')).toBe('<svg>1</svg>');
@@ -231,21 +231,26 @@ test('a page’s drawing pictures are written in its folder, rewritten only when
   await new Promise((r) => setTimeout(r, 20));
   await apply({ saves: [{ ...save('p', 'Page', 'Markets', null, page('p', 'Page!')), sidecars: { 'drawing-d1.svg': '<svg>1</svg>' } }] });
   expect((await stat(join(root, 'Markets/Page/drawing-d1.svg'))).mtimeMs).toBe(before);
-  await apply({ saves: [save('p', 'Page')] });
+  // A save that doesn't mention the drawing leaves it alone.
+  await apply({ saves: [save('p', 'Page', 'Markets', null, page('p', 'Page?'))] });
+  expect(await read('Markets/Page/drawing-d1.svg')).toBe('<svg>1</svg>');
+  await apply({ saves: [{ ...save('p', 'Page'), removedSidecars: ['drawing-d1.svg'] }] });
+  expect(trashed).toEqual(['Markets/Page/drawing-d1.svg']);
   expect(await list('Markets')).toEqual(['Page.json']);
 });
 
-test('removing pictures leaves the sub-pages in the folder alone', async () => {
-  await setup({ 'Markets/Page.json': page('p', 'Page'), 'Markets/Page/Sub.json': page('s', 'Sub'), 'Markets/Page/drawing-x.svg': '<svg/>' });
-  await apply({ saves: [save('p', 'Page', 'Markets', null, page('p', 'Page 2'))] });
-  expect(await list('Markets/Page')).toEqual(['Sub.json']);
+test('removing a drawing leaves the sub-pages and other files in the folder alone', async () => {
+  await setup({ 'Markets/Page.json': page('p', 'Page'), 'Markets/Page/Sub.json': page('s', 'Sub'), 'Markets/Page/drawing-x.svg': '<svg/>', 'Markets/Page/drawing-y.svg': '<svg/>' });
+  await apply({ saves: [{ ...save('p', 'Page', 'Markets', null, page('p', 'Page 2')), removedSidecars: ['drawing-x.svg'] }] });
+  expect(await list('Markets/Page')).toEqual(['Sub.json', 'drawing-y.svg']);
+  expect(trashed).toEqual(['Markets/Page/drawing-x.svg']);
 });
 
 test('a picture with an unsafe name is never written', async () => {
   await setup({ 'Markets/': '' });
-  const result = await apply({ saves: [{ ...save('p', 'Page'), sidecars: { '../x.svg': 'a', 'drawing-a/b.svg': 'b', 'notes.svg': 'c' } }] });
+  const result = await apply({ saves: [{ ...save('p', 'Page'), sidecars: { '../x.svg': 'a', 'drawing-a/b.svg': 'b', 'notes.svg': 'c' }, removedSidecars: ['../../y.svg'] }] });
   expect(result.ok).toBe(false);
-  expect(result.error).toMatch(/picture/);
+  expect(result.error).toMatch(/drawing file/);
   expect(await list('Markets')).toEqual(['Page.json']);
   expect(await list('')).toEqual(['.quest', 'Markets']);
 });

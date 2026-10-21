@@ -1,7 +1,7 @@
 import { watch, type FSWatcher } from 'node:fs';
 import type { DiskDelta, FlushBatch, SpaceRecord } from '@shared/ipc';
 import { safeName } from '@shared/names';
-import type { ScanIndex, ScanResult } from './scan';
+import type { PageEntry, ScanIndex, ScanResult } from './scan';
 import { spaceOrder } from './apply';
 import { STATE_PATH } from './scan';
 
@@ -46,6 +46,14 @@ function titleIn(text: string): unknown {
   }
 }
 
+/** Whether a page's drawing files are the same: the same names, holding the same text. */
+function sameDrawings(a: PageEntry, b: PageEntry): boolean {
+  const x = a.sidecars ?? {};
+  const y = b.sidecars ?? {};
+  const names = Object.keys(x);
+  return names.length === Object.keys(y).length && names.every((n) => y[n]?.text === x[n].text);
+}
+
 const sameSpaces = (a: SpaceRecord[], b: SpaceRecord[]) => a.length === b.length && a.every((s, i) => s.id === b[i].id && s.name === b[i].name);
 
 /** What a fresh scan found that main didn't know: pages added, changed, moved or gone, and the spaces. Null for nothing. */
@@ -53,7 +61,7 @@ export function diffScans(prev: Known, next: ScanResult): Omit<DiskDelta, 'seq'>
   const pages = next.snapshot.pages.flatMap((record) => {
     const before = prev.index.pages.get(record.id);
     const now = next.index.pages.get(record.id);
-    if (before && now && before.path === now.path && before.text === now.text && !!before.error === !!now.error) return [];
+    if (before && now && before.path === now.path && before.text === now.text && !!before.error === !!now.error && sameDrawings(before, now)) return [];
     if (before && before.path !== record.path) {
       const oldBase = baseOf(before.path);
       const newBase = baseOf(record.path);

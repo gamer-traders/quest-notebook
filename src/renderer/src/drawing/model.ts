@@ -40,3 +40,6 @@ export const SIZES: Record<Tool, [number, number, number]> = {
   highlighter: [14, 22, 32],
   eraser: [8, 16, 32],
 };
+
+/** A drawing's file, in its page's folder. */
+export const drawingFileName = (id: string) => `drawing-${id}.svg`;

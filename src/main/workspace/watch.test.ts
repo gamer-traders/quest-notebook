@@ -112,3 +112,19 @@ test('the watcher calls back soon after a file changes', async () => {
     stop();
   }
 });
+
+test('a drawing file edited outside changes its page', async () => {
+  const { root, known } = await workspace({ 'Markets/A.json': page('a', 'A'), 'Markets/A/drawing-d1.svg': '<svg>1</svg>' });
+  await writeFile(join(root, 'Markets/A/drawing-d1.svg'), '<svg>2</svg>');
+  const delta = await rescan(root, known);
+  expect(delta!.pages).toHaveLength(1);
+  expect(delta!.pages[0]).toMatchObject({ id: 'a', drawings: { 'drawing-d1.svg': '<svg>2</svg>' } });
+});
+
+test('the app’s own drawing writes are quiet', async () => {
+  const { root, known } = await workspace({ 'Markets/A.json': page('a', 'A') });
+  const markets = known.spaces[0].id;
+  const batch = { spaces: known.spaces, createdSpaces: [], deletedSpaces: [], journalSpaceId: null, deletes: [], saves: [{ id: 'a', spaceId: markets, parentId: null, title: 'A', json: page('a', 'A'), sidecars: { 'drawing-d1.svg': '<svg>new</svg>' } }] };
+  await applyFlush(root, known.index, batch, deps);
+  expect(await rescan(root, knownAfterFlush(known, batch))).toBeNull();
+});

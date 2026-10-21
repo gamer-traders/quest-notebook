@@ -106,23 +106,11 @@ export interface FilePrediction extends WithChildren {
   reason: string;
 }
 
-export interface FileStroke {
-  tool: 'pen' | 'pencil' | 'marker' | 'highlighter';
-  color: 'ink' | MarkColor;
-  size: number;
-  /** False for mouse strokes: their points carry no pen pressure. */
-  pressure: boolean;
-  /** "x,y,pressure" triples separated by spaces, in drawing units. */
-  points: string;
-}
-
 export interface FileDrawing extends WithChildren {
   type: 'drawing';
   id: string;
-  /** In drawing units. A drawing is always 1000 units wide. */
-  height: number;
-  background: 'blank' | 'grid' | 'lines';
-  strokes: FileStroke[];
+  /** The drawing's SVG file, in the page's folder (the folder named like the page file): the picture and its strokes. */
+  file: string;
 }
 
 export type FileBlock =

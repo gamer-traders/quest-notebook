@@ -24,6 +24,8 @@ export interface PageRecord {
   error?: string;
   /** Set when the file was renamed outside the app: its new name, which becomes its title. */
   titleFromPath?: string;
+  /** The page's drawing files (drawing-<id>.svg in its folder), by file name. */
+  drawings?: Record<string, string>;
 }
 
 /** What the window was showing, kept in .quest/state.json. */
@@ -62,16 +64,15 @@ export interface PageSave {
   spaceId: string;
   parentId: string | null;
   title: string;
-  /** The page file's text. Left out when only the page's pictures need writing, as after a change from disk. */
+  /** The page file's text. Left out when only the page's drawing files need writing. */
   json?: string;
-  /**
-   * Every picture copy the page has, by file name (drawing-<id>.svg), written in the page's folder. Copies in
-   * that folder no longer listed are removed.
-   */
+  /** Drawing files to write in the page's folder, by file name (drawing-<id>.svg). Only changed drawings are sent. */
   sidecars: Record<string, string>;
+  /** Drawing files the page no longer has: moved to the Trash. Files not named here are never touched. */
+  removedSidecars?: string[];
 }
 
-/** The names main accepts for a picture copy beside a page. */
+/** The names main accepts for a drawing file beside a page. */
 export const SIDECAR_NAME = /^drawing-[A-Za-z0-9_-]{1,64}\.svg$/;
 
 /**

@@ -6,6 +6,7 @@ import type { PageBlock } from '../page/blockTypes';
 import { seedNotebooks } from '../lib/seed';
 import { newChart } from '../lib/cells';
 import { fileToPage, isoFromSec, pageToFile, secFromIso } from './convert';
+import { drawingToSvg } from '../drawing/svg';
 
 const writeTarget = () => 'Target';
 const meta = (nb: Pick<Notebook, 'id' | 'spaceId' | 'parentId'>, path = 'Markets/Page.json') => ({
@@ -157,26 +158,45 @@ const drawingPage = (item: DrawingCell): Notebook => ({
   items: { [item.id]: item },
 });
 
-test('a drawing is written as strokes on one line each, and read back', () => {
-  const item: DrawingCell = {
-    id: 'd1', type: 'drawing', height: 420, background: 'grid',
-    strokes: [{ id: 's1', tool: 'pen', color: 'ink', size: 3, pressure: true, points: [1.5, 2, 0.4, 3, 4, 0.6] }],
-  };
-  const file = pageToFile(drawingPage(item), writeTarget);
-  expect(file.blocks).toEqual([
-    { type: 'drawing', id: 'd1', height: 420, background: 'grid', strokes: [{ tool: 'pen', color: 'ink', size: 3, pressure: true, points: '1.5,2,0.4 3,4,0.6' }] },
-  ]);
-  expect(formatJson(file)).toContain('"points": "1.5,2,0.4 3,4,0.6" }');
-  const back = fileToPage(file, meta({ id: 'n1', spaceId: 's', parentId: null })).notebook.items.d1 as DrawingCell;
-  expect({ ...back, strokes: back.strokes.map((s) => ({ ...s, id: '' })) }).toEqual({ ...item, strokes: [{ ...item.strokes[0], id: '' }] });
+const drawingItem: DrawingCell = {
+  id: 'd1', type: 'drawing', height: 420, background: 'grid',
+  strokes: [{ id: 's1', tool: 'pen', color: 'ink', size: 3, pressure: true, points: [1.5, 2, 0.4, 3, 4, 0.6] }],
+};
+const blankStrokes = (d: DrawingCell) => ({ ...d, strokes: d.strokes.map((s) => ({ ...s, id: '' })) });
+const nm = () => meta({ id: 'n1', spaceId: 's', parentId: null });
+
+test('a drawing is written in the page as a reference to its own file', () => {
+  expect(pageToFile(drawingPage(drawingItem), writeTarget).blocks).toEqual([{ type: 'drawing', id: 'd1', file: 'drawing-d1.svg' }]);
 });
 
-test('a drawing written by hand is read with defaults, and strokes without points are dropped', () => {
-  const raw = {
-    blocks: [{ type: 'drawing', id: 'd2', strokes: [{ tool: 'brush', color: 'teal', size: 'big', points: '10,10 20,20,0.9' }, { tool: 'pen', points: 'nope' }] }],
-  };
-  const d = fileToPage(raw, meta({ id: 'n1', spaceId: 's', parentId: null })).notebook.items.d2 as DrawingCell;
-  expect(d).toMatchObject({ type: 'drawing', height: 400, background: 'blank' });
+test('a drawing is read from its file beside the page', () => {
+  const file = pageToFile(drawingPage(drawingItem), writeTarget);
+  const { notebook, drawingsToWrite } = fileToPage(file, nm(), { 'drawing-d1.svg': drawingToSvg(drawingItem) });
+  expect(blankStrokes(notebook.items.d1 as DrawingCell)).toEqual(blankStrokes(drawingItem));
+  expect([...drawingsToWrite]).toEqual([]);
+});
+
+test('a drawing file written by hand is read, and marked to be written again in the app’s form', () => {
+  const file = { blocks: [{ type: 'drawing', id: 'd1', file: 'drawing-d1.svg' }] };
+  const handmade = `<svg viewBox="0 0 1000 300"><path data-points="10,10 20,20,0.9" data-tool="marker" data-color="red"/></svg>`;
+  const { notebook, drawingsToWrite } = fileToPage(file, nm(), { 'drawing-d1.svg': handmade });
+  expect(notebook.items.d1).toMatchObject({ type: 'drawing', height: 300, strokes: [{ tool: 'marker', color: 'red' }] });
+  expect([...drawingsToWrite]).toEqual(['d1']);
+});
+
+test('a drawing whose file is missing starts empty, and gets a file', () => {
+  const { notebook, drawingsToWrite } = fileToPage({ blocks: [{ type: 'drawing', id: 'd1', file: 'drawing-d1.svg' }] }, nm(), {});
+  expect(notebook.items.d1).toMatchObject({ type: 'drawing', height: 400, background: 'blank', strokes: [] });
+  expect([...drawingsToWrite]).toEqual(['d1']);
+});
+
+test('a drawing saved with its strokes inside the page, as before, is read and moved to its own file', () => {
+  const raw = { blocks: [{ type: 'drawing', id: 'd2', height: 500, background: 'lines', strokes: [{ tool: 'brush', color: 'teal', size: 'big', points: '10,10 20,20,0.9' }, { tool: 'pen', points: 'nope' }] }] };
+  const { notebook, repaired, drawingsToWrite } = fileToPage(raw, nm());
+  const d = notebook.items.d2 as DrawingCell;
+  expect(d).toMatchObject({ type: 'drawing', height: 500, background: 'lines' });
   expect(d.strokes).toHaveLength(1);
   expect(d.strokes[0]).toMatchObject({ tool: 'pen', color: 'ink', size: 3, pressure: true, points: [10, 10, 0.5, 20, 20, 0.9] });
+  expect(repaired).toBe(true);
+  expect([...drawingsToWrite]).toEqual(['d2']);
 });

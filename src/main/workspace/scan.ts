@@ -7,12 +7,20 @@ import { EMPTY_UI, SIDECAR_NAME, type PageRecord, type SpaceRecord, type UiState
 import { insideRoot, writeFileAtomic } from './paths';
 
 /** What main knows of each file it has seen, so it can tell its own writes from changes made outside. */
+export interface FileState {
+  text: string;
+  mtimeMs: number;
+  size: number;
+}
+
 export interface PageEntry {
   path: string;
   mtimeMs: number;
   size: number;
   text: string;
   error?: string;
+  /** The page's drawing files, by name, as last read or written. */
+  sidecars?: Record<string, FileState>;
 }
 
 export interface ScanIndex {
@@ -139,6 +147,25 @@ const highestPosition = (records: PageRecord[]) =>
     return typeof p === 'number' && Number.isFinite(p) && p > max ? p : max;
   }, -1);
 
+/** The drawing files in a page's folder. A file whose size and time haven't changed since the last scan isn't read again. */
+async function readDrawings(walk: Walk, record: PageRecord, folder: string | null): Promise<void> {
+  const sidecars: Record<string, FileState> = {};
+  const before = walk.prev?.pages.get(record.id)?.sidecars ?? {};
+  if (folder !== null) {
+    for (const name of await readdir(insideRoot(walk.root, folder))) {
+      if (!SIDECAR_NAME.test(name)) continue;
+      const abs = insideRoot(walk.root, `${folder}/${name}`);
+      const info = await stat(abs);
+      const known = before[name];
+      const text = known && known.mtimeMs === info.mtimeMs && known.size === info.size ? known.text : await readFile(abs, 'utf8');
+      sidecars[name] = { text, mtimeMs: info.mtimeMs, size: info.size };
+    }
+  }
+  record.drawings = Object.fromEntries(Object.entries(sidecars).map(([name, file]) => [name, file.text]));
+  const entry = walk.index.pages.get(record.id);
+  if (entry) entry.sidecars = sidecars;
+}
+
 /** Reads the pages in a folder, and the folders of sub-pages beside them. */
 async function walkFolder(walk: Walk, dir: string, spaceId: string, parentId: string | null): Promise<void> {
   const entries = (await readdir(insideRoot(walk.root, dir), { withFileTypes: true })).filter((e) => !isIgnoredName(e.name));
@@ -172,6 +199,7 @@ async function walkFolder(walk: Walk, dir: string, spaceId: string, parentId: st
   for (const record of records) {
     const base = nameKey(record.path.slice(dir.length + 1, -'.json'.length));
     const folder = folderNames.find((name) => nameKey(name) === base);
+    if (record.error === undefined) await readDrawings(walk, record, folder === undefined ? null : `${dir}/${folder}`);
     if (folder !== undefined) await walkFolder(walk, `${dir}/${folder}`, spaceId, record.id);
   }
 }

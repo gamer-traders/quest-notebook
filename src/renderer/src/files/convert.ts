@@ -1,8 +1,10 @@
 import type { FileBlock, FileCandle, FileChart, FileLook, FilePoint, PageFile } from '@shared/pageFile';
 import { formatJson } from '@shared/formatJson';
 import type { CallCell, ChartCell, DrawingCell, Interval, ItemData, MarkLook, Notebook, PlanCell } from '../types';
-import { BACKGROUNDS, INK_COLORS, NEW_HEIGHT, PEN_TOOLS, SIZES, type Stroke } from '../drawing/model';
-import { decodePoints, encodedPoints } from '../drawing/strokes';
+import { BACKGROUNDS, INK_COLORS, NEW_HEIGHT, PEN_TOOLS, SIZES, drawingFileName, type Stroke } from '../drawing/model';
+import { decodePoints } from '../drawing/strokes';
+import { drawingFromSvg, drawingToSvg } from '../drawing/svg';
+import { SIDECAR_NAME } from '@shared/ipc';
 import type { NotebookLinkInline, PageBlock } from '../page/blockTypes';
 import type { Bar } from '../lib/market';
 import { INTERVALS } from '../lib/market';
@@ -94,13 +96,8 @@ function itemToFile(item: ItemData): FileBlock {
     case 'call':
       return { type: 'prediction', id: item.id, direction: item.direction, bars: item.bars, reason: item.reason };
     case 'drawing':
-      return {
-        type: 'drawing',
-        id: item.id,
-        height: item.height,
-        background: item.background,
-        strokes: item.strokes.map((s) => ({ tool: s.tool, color: s.color, size: s.size, pressure: s.pressure, points: encodedPoints(s) })),
-      };
+      // The strokes live in the drawing's own file; the page only points at it.
+      return { type: 'drawing', id: item.id, file: drawingFileName(item.id) };
   }
 }
 
@@ -255,7 +252,8 @@ function callFromFile(raw: Raw, id: string): CallCell {
   return { id, type: 'call', direction: raw.direction === 'down' ? 'down' : 'up', bars: bars !== null && bars >= 1 ? Math.round(bars) : 10, reason: str(raw.reason) };
 }
 
-function drawingFromFile(raw: Raw, id: string): DrawingCell {
+/** Strokes kept inside the page, as drawings were saved before they had files of their own. */
+function inlineDrawing(raw: Raw, id: string): DrawingCell {
   const height = num(raw.height);
   const strokes = list(raw.strokes).flatMap((s): Stroke[] => {
     const points = decodePoints(str(s.points));
@@ -267,11 +265,39 @@ function drawingFromFile(raw: Raw, id: string): DrawingCell {
   return { id, type: 'drawing', height: height !== null && height > 0 ? height : NEW_HEIGHT, background: oneOf(raw.background, BACKGROUNDS) ?? 'blank', strokes };
 }
 
+/** What reading a page's drawings needs: their files' text, and where to note the drawings that need writing. */
+interface DrawingContext {
+  files: Record<string, string>;
+  toWrite: Set<string>;
+  movedOut: boolean;
+}
+
+/**
+ * A drawing read from its file in the page's folder. A file written by hand, or missing, or strokes still
+ * inside the page, are read as well as can be, and the drawing is noted for writing in the app's own form.
+ */
+function drawingFromFile(raw: Raw, id: string, ctx: DrawingContext): DrawingCell {
+  const named = typeof raw.file === 'string' && SIDECAR_NAME.test(raw.file) ? raw.file : drawingFileName(id);
+  const text = ctx.files[named] ?? ctx.files[drawingFileName(id)];
+  const read = text === undefined ? null : drawingFromSvg(text);
+  if (read) {
+    const drawing: DrawingCell = { id, type: 'drawing', ...read };
+    if (drawingToSvg(drawing) !== text || named !== drawingFileName(id)) ctx.toWrite.add(id);
+    return drawing;
+  }
+  ctx.toWrite.add(id);
+  if (Array.isArray(raw.strokes)) {
+    ctx.movedOut = true;
+    return inlineDrawing(raw, id);
+  }
+  return { id, type: 'drawing', height: NEW_HEIGHT, background: 'blank', strokes: [] };
+}
+
 const textContent = (text: string) => (text ? [{ type: 'text' as const, text, styles: {} }] : []);
 
-function blocksFromFile(rawBlocks: unknown, items: Record<string, ItemData>): PageBlock[] {
+function blocksFromFile(rawBlocks: unknown, items: Record<string, ItemData>, ctx: DrawingContext): PageBlock[] {
   return list(rawBlocks).map((raw): PageBlock => {
-    const children = blocksFromFile(raw.children, items);
+    const children = blocksFromFile(raw.children, items, ctx);
     const textBlock = (type: string, props: Record<string, unknown> = {}): PageBlock => ({
       id: uid(),
       type,
@@ -311,7 +337,7 @@ function blocksFromFile(rawBlocks: unknown, items: Record<string, ItemData>): Pa
       case 'prediction':
         return itemBlock('prediction', callFromFile);
       case 'drawing':
-        return itemBlock('drawing', drawingFromFile);
+        return itemBlock('drawing', (r, id) => drawingFromFile(r, id, ctx));
       default:
         // Nothing is lost: a block the app doesn't know is shown, and saved, as its own JSON.
         return { id: uid(), type: 'codeBlock', props: { language: 'json' }, content: textContent(formatJson(raw).trim()), children };
@@ -325,7 +351,11 @@ const baseName = (path: string) => (path.split('/').at(-1) ?? path).replace(/\.j
  * A page read from its file. Throws when the file isn't a page at all. Fields that are missing are filled
  * in, and `repaired` says so, so the file can be written back whole.
  */
-export function fileToPage(raw: unknown, meta: FileMeta): { notebook: Notebook; repaired: boolean } {
+export function fileToPage(
+  raw: unknown,
+  meta: FileMeta,
+  drawingFiles: Record<string, string> = {},
+): { notebook: Notebook; repaired: boolean; drawingsToWrite: Set<string> } {
   if (!isRaw(raw) || !Array.isArray(raw.blocks)) throw new Error('This file is not a page: a page is a JSON object with a "blocks" list.');
   let repaired = false;
   const fill = <T,>(value: T | null, fallback: T): T => {
@@ -339,7 +369,9 @@ export function fileToPage(raw: unknown, meta: FileMeta): { notebook: Notebook; 
   };
 
   const items: Record<string, ItemData> = {};
-  const blocks = blocksFromFile(raw.blocks, items);
+  const ctx: DrawingContext = { files: drawingFiles, toWrite: new Set(), movedOut: false };
+  const blocks = blocksFromFile(raw.blocks, items, ctx);
+  if (ctx.movedOut) repaired = true;
   const journalDate = typeof raw.journalDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw.journalDate) ? raw.journalDate : undefined;
   const notebook: Notebook = {
     id: meta.id,
@@ -354,5 +386,5 @@ export function fileToPage(raw: unknown, meta: FileMeta): { notebook: Notebook; 
     items,
     path: meta.path,
   };
-  return { notebook, repaired };
+  return { notebook, repaired, drawingsToWrite: ctx.toWrite };
 }

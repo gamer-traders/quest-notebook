@@ -166,3 +166,11 @@ test('an empty folder still becomes a page', async () => {
   const { snapshot } = await scanWorkspace(root);
   expect(snapshot.pages.map((p) => p.path)).toEqual(['Markets/Ideas.json']);
 });
+
+test('a page’s drawing files come with it', async () => {
+  const root = await tmpWorkspace({ 'Markets/A.json': page('a', 'A'), 'Markets/A/drawing-d1.svg': '<svg>1</svg>', 'Markets/A/notes.txt': 'x', 'Markets/A/B.json': page('b', 'B') });
+  const { snapshot, index } = await scanWorkspace(root);
+  expect(snapshot.pages.find((p) => p.id === 'a')!.drawings).toEqual({ 'drawing-d1.svg': '<svg>1</svg>' });
+  expect(snapshot.pages.find((p) => p.id === 'b')!.drawings).toEqual({});
+  expect(index.pages.get('a')!.sidecars!['drawing-d1.svg'].text).toBe('<svg>1</svg>');
+});

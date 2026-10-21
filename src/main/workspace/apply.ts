@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rename, rm, rmdir, stat } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rmdir, stat } from 'node:fs/promises';
 import { formatJson } from '@shared/formatJson';
 import { SIDECAR_NAME, type FlushBatch, type FlushResult, type PageSave } from '@shared/ipc';
 import { nameKey, safeName, uniqueName } from '@shared/names';
@@ -163,31 +163,41 @@ export async function applyFlush(root: string, index: ScanIndex, batch: FlushBat
         index.pages.set(save.id, { path: target, mtimeMs: info.mtimeMs, size: info.size, text: save.json });
       }
       paths[save.id] = target;
-      await writeSidecars(target, save.sidecars ?? {});
+      await writeSidecars(save.id, target, save.sidecars ?? {}, save.removedSidecars ?? []);
     } catch (error) {
       errors.push(message(error));
     }
   }
 
-  /** The page's picture copies, in its folder: written when they differ, and removed when no longer listed. */
-  async function writeSidecars(pagePath: string, sidecars: Record<string, string>) {
+  /**
+   * The page's drawing files, in its folder: written when their text differs, and moved to the Trash when the
+   * save names them as removed. They're the drawings themselves, so nothing else is touched or deleted for good.
+   */
+  async function writeSidecars(id: string, pagePath: string, sidecars: Record<string, string>, removed: string[]) {
+    const entry = index.pages.get(id);
+    const known = { ...(entry?.sidecars ?? {}) };
     const folder = (await folderOnDisk(root, pagePath)) ?? folderOfPage(pagePath);
-    const wanted = Object.entries(sidecars).filter(([name]) => {
+    const safe = (name: string) => {
       if (SIDECAR_NAME.test(name)) return true;
-      errors.push(`Skipped a drawing picture with an unsafe file name: ${name}`);
+      errors.push(`Skipped a drawing file with an unsafe name: ${name}`);
       return false;
-    });
-    if (wanted.length) await mkdir(abs(folder), { recursive: true });
-    for (const [name, text] of wanted) {
+    };
+    const writes = Object.entries(sidecars).filter(([name]) => safe(name));
+    if (writes.length) await mkdir(abs(folder), { recursive: true });
+    for (const [name, text] of writes) {
       const file = `${folder}/${name}`;
+      if (known[name]?.text === text && (await exists(file))) continue;
       if ((await readFile(abs(file), 'utf8').catch(() => null)) !== text) await writeFileAtomic(abs(file), text);
+      const info = await stat(abs(file));
+      known[name] = { text, mtimeMs: info.mtimeMs, size: info.size };
     }
-    if (!(await exists(folder))) return;
-    const keep = new Set(wanted.map(([name]) => name));
-    for (const name of await readdir(abs(folder))) {
-      if (SIDECAR_NAME.test(name) && !keep.has(name)) await rm(abs(`${folder}/${name}`));
+    for (const name of removed.filter(safe)) {
+      const file = `${folder}/${name}`;
+      if (await stat(abs(file)).then((info) => info.isFile(), () => false)) await deps.trash(abs(file));
+      delete known[name];
+      leftBehind.add(folder);
     }
-    leftBehind.add(folder);
+    if (entry) entry.sidecars = known;
   }
 
   // ---- A page folder whose last page left is removed. Space folders stay, even empty. ----
