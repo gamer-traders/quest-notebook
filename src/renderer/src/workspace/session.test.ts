@@ -127,3 +127,18 @@ test('a drawing file whose block was removed on disk is left alone', async () =>
   await flushWorkspace();
   expect(batches.flatMap((b) => b.saves).filter((s) => s.id === 'b')).toEqual([]);
 });
+
+test('a page deleted outside while being edited is saved again whole, with every drawing', async () => {
+  const svg = '<svg viewBox="0 0 1000 400"><path data-points="10,10 90,90,0.8"/></svg>';
+  applyDisk({ seq: 1, spaces: snapshot.spaces, journalSpaceId: null, pages: [{ ...snapshot.pages[1], file: drawingPageFile('bee'), drawings: { 'drawing-d1.svg': svg } }], removed: [] });
+  await flushWorkspace();
+  batches = [];
+  useStore.getState().updateNotebook('b', { title: 'B edited' });
+  // The page's file and folder go, drawings and all.
+  applyDisk({ seq: 2, spaces: snapshot.spaces, journalSpaceId: null, pages: [], removed: ['b'] });
+  expect(useStore.getState().notebooks.some((n) => n.id === 'b')).toBe(true);
+  await flushWorkspace();
+  const save = batches.flatMap((b) => b.saves).find((s) => s.id === 'b')!;
+  expect(JSON.parse(save.json!).title).toBe('B edited');
+  expect(Object.keys(save.sidecars)).toEqual(['drawing-d1.svg']);
+});

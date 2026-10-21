@@ -182,6 +182,8 @@ export interface SyncHandle {
   markDirty(ids: Iterable<string>): void;
   /** Drawings to write to their files, by page, such as strokes moving out of the page. The page files are left as they are. */
   writeDrawings(pageId: string, drawingIds: Iterable<string>): void;
+  /** Pages whose files went from disk while they had edits here: written again whole, the page file and every drawing. */
+  rewritePages(ids: Iterable<string>): void;
   /**
    * Drawings changed on disk, for a page with unsent edits: each one not touched here since it was last on disk
    * takes the disk's version. The page's other edits stay.
@@ -409,6 +411,15 @@ export function startSync<S extends SyncedState>(
       const onDisk = baseline.get(pageId)?.drawings;
       for (const id of drawingIds) onDisk?.delete(id);
       dirty.add(pageId);
+      schedule();
+    },
+
+    rewritePages(ids) {
+      // Nothing of the page is on disk as it was sent, so the file and each drawing differ from it, and are written.
+      for (const id of ids) {
+        baseline.delete(id);
+        dirty.add(id);
+      }
       schedule();
     },
 

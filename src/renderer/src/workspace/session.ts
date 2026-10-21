@@ -60,6 +60,10 @@ export function applyDisk(delta: DiskDelta): void {
   // Drawing files written by hand, or missing, are written in the app's form.
   for (const [pageId, ids] of drawingsToWrite) sync.writeDrawings(pageId, ids);
 
+  // A page being edited that was deleted outside stays, and is written again whole, drawings and all.
+  const kept = delta.removed.filter((id) => pending.has(id));
+  if (kept.length) sync.rewritePages(kept);
+
   // A page being edited keeps its edits, but takes the outside version of each drawing it didn't touch.
   for (const record of delta.pages) if (pending.has(record.id)) sync.adoptDrawings(record.id, drawingsIn(record));
 
