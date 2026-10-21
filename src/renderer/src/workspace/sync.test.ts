@@ -94,3 +94,16 @@ test('new and deleted spaces are named in the batch', () => {
   const { batch } = plan(prev, { spaces: next }, baseline);
   expect(batch).toMatchObject({ createdSpaces: ['si'], deletedSpaces: ['sl'] });
 });
+
+test('a page with a drawing is saved with a picture of it; one without, with none', () => {
+  const drawing = { id: 'd1', type: 'drawing' as const, height: 400, background: 'blank' as const, strokes: [{ id: 's', tool: 'pen' as const, color: 'ink' as const, size: 3, pressure: true, points: [10, 10, 0.5, 60, 60, 0.5] }] };
+  const { prev, baseline } = start([nb('n1', 'One'), nb('n2', 'Two')]);
+  const next = prev.notebooks.map((n) =>
+    n.id === 'n1' ? { ...n, blocks: [...n.blocks, { id: 'd1', type: 'drawing', props: { itemId: 'd1' }, children: [] }], items: { d1: drawing } } : { ...n, title: 'Two!' },
+  );
+  const { batch } = plan(prev, { notebooks: next }, baseline);
+  const one = batch!.saves.find((s) => s.id === 'n1')!;
+  expect(Object.keys(one.sidecars)).toEqual(['drawing-d1.svg']);
+  expect(one.sidecars['drawing-d1.svg'].startsWith('<svg')).toBe(true);
+  expect(batch!.saves.find((s) => s.id === 'n2')!.sidecars).toEqual({});
+});

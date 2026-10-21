@@ -11,7 +11,7 @@ test('a batch meant for another workspace is refused', async () => {
   const session = await WorkspaceSession.open(root, false, { change: () => {}, lost: () => {} }, (abs) => rm(abs, { recursive: true }));
   try {
     const markets = session.snapshot.spaces[0];
-    const batch = { spaces: [markets], createdSpaces: [], deletedSpaces: [], journalSpaceId: null, saves: [{ id: 'x', spaceId: markets.id, parentId: null, title: 'X', json: '{}\n' }], deletes: [] };
+    const batch = { spaces: [markets], createdSpaces: [], deletedSpaces: [], journalSpaceId: null, saves: [{ id: 'x', spaceId: markets.id, parentId: null, title: 'X', json: '{}\n', sidecars: {} }], deletes: [] };
     const result = await session.flush({ ...batch, root: '/somewhere/else' });
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/another workspace/);
@@ -52,7 +52,7 @@ test('a save planned before an outside change to that page is refused as stale, 
     for (let i = 0; i < 60 && deltas.length === 0; i++) await new Promise((r) => setTimeout(r, 50));
     expect(deltas[0].seq).toBe(1);
 
-    const stale = { spaces: [markets, lessons], createdSpaces: [], deletedSpaces: [], journalSpaceId: null, deletes: [], seenSeq: 0, saves: [{ id: 'a', spaceId: markets.id, parentId: null, title: 'A', json: '{"id":"a","title":"A","position":0,"blocks":[]}\n' }] };
+    const stale = { spaces: [markets, lessons], createdSpaces: [], deletedSpaces: [], journalSpaceId: null, deletes: [], seenSeq: 0, saves: [{ id: 'a', spaceId: markets.id, parentId: null, title: 'A', json: '{"id":"a","title":"A","position":0,"blocks":[]}\n', sidecars: {} }] };
     const refused = await session.flush(stale);
     expect(refused.stale).toEqual(['a']);
     await access(join(root, 'Lessons/A.json'));
@@ -75,7 +75,7 @@ test('saving into a workspace whose folder is gone re-creates nothing and report
   try {
     const markets = session.snapshot.spaces[0];
     await rm(root, { recursive: true });
-    const result = await session.flush({ spaces: [markets], createdSpaces: [], deletedSpaces: [], journalSpaceId: null, deletes: [], saves: [{ id: 'n', spaceId: markets.id, parentId: null, title: 'New', json: '{}\n' }] });
+    const result = await session.flush({ spaces: [markets], createdSpaces: [], deletedSpaces: [], journalSpaceId: null, deletes: [], saves: [{ id: 'n', spaceId: markets.id, parentId: null, title: 'New', json: '{}\n', sidecars: {} }] });
     await session.saveUi({ openPageId: null, expanded: [], collapsedPanels: [] });
     expect(result.ok).toBe(false);
     expect(lost).toBe(`Couldn't find ${root}`);

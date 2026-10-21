@@ -35,8 +35,8 @@ test('the app’s own writes are quiet', async () => {
     deletedSpaces: [],
     journalSpaceId: lessons,
     saves: [
-      { id: 'a', spaceId: lessons, parentId: null, title: 'A moved', json: page('a', 'A moved') },
-      { id: 'n', spaceId: markets, parentId: null, title: 'New', json: page('n', 'New') },
+      { id: 'a', spaceId: lessons, parentId: null, title: 'A moved', json: page('a', 'A moved'), sidecars: {} },
+      { id: 'n', spaceId: markets, parentId: null, title: 'New', json: page('n', 'New'), sidecars: {} },
     ],
     deletes: [],
   };

@@ -1,8 +1,10 @@
 import type { StoreApi, UseBoundStore } from 'zustand';
 import { create } from 'zustand';
 import { formatJson } from '@shared/formatJson';
-import type { FlushBatch, PageSave, QuestApi, UiState } from '@shared/ipc';
-import type { Notebook, Space } from '../types';
+import { SIDECAR_NAME, type FlushBatch, type PageSave, type QuestApi, type UiState } from '@shared/ipc';
+import type { DrawingCell, Notebook, Space } from '../types';
+import { flattenBlocks } from '../page/blocks';
+import { drawingToSvg } from '../drawing/svg';
 import { displayTitle } from '../page/tree';
 import { pageToFile } from '../files/convert';
 import { linkWriter, linksTo } from '../files/links';
@@ -37,6 +39,27 @@ export function baselineFor(slice: SyncSlice, unsaved: Set<string>): Baseline {
     baseline.set(nb.id, { json: serialize(nb, write), spaceId: nb.spaceId, parentId: nb.parentId });
   }
   return baseline;
+}
+
+// A drawing's picture is made once per version of it: drawings change by being replaced, so the object is the key.
+const pictures = new WeakMap<DrawingCell, string>();
+
+/** The picture copies a page's drawings get beside it, by file name. Drawings whose id can't be a file name get none. */
+export function sidecarsFor(nb: Notebook): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const block of flattenBlocks(nb.blocks)) {
+    const item = nb.items[block.id];
+    if (block.type !== 'drawing' || item?.type !== 'drawing') continue;
+    const name = `drawing-${item.id}.svg`;
+    if (!SIDECAR_NAME.test(name)) continue;
+    let svg = pictures.get(item);
+    if (svg === undefined) {
+      svg = drawingToSvg(item);
+      pictures.set(item, svg);
+    }
+    out[name] = svg;
+  }
+  return out;
 }
 
 const titleKey = (nb: Notebook) => displayTitle(nb.title).trim().toLowerCase();
@@ -90,7 +113,7 @@ export function planFlush(prev: SyncSlice, next: SyncSlice, baseline: Baseline, 
     const json = serialize(nb, write);
     const sent = out.get(id);
     if (sent && sent.json === json && sent.spaceId === nb.spaceId && sent.parentId === nb.parentId) continue;
-    saves.push({ id, spaceId: nb.spaceId, parentId: nb.parentId, title: nb.title, json });
+    saves.push({ id, spaceId: nb.spaceId, parentId: nb.parentId, title: nb.title, json, sidecars: sidecarsFor(nb) });
     out.set(id, { json, spaceId: nb.spaceId, parentId: nb.parentId });
   }
   for (const id of deletes) out.delete(id);

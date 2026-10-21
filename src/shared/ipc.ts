@@ -63,7 +63,15 @@ export interface PageSave {
   parentId: string | null;
   title: string;
   json: string;
+  /**
+   * Every picture copy the page has, by file name (drawing-<id>.svg), written in the page's folder. Copies in
+   * that folder no longer listed are removed.
+   */
+  sidecars: Record<string, string>;
 }
+
+/** The names main accepts for a picture copy beside a page. */
+export const SIDECAR_NAME = /^drawing-[A-Za-z0-9_-]{1,64}\.svg$/;
 
 /**
  * Everything that changed since the last flush. `spaces` is the window's whole list, in order, for names and

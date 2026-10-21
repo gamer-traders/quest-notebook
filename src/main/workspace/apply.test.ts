@@ -37,7 +37,7 @@ const deps = () => ({
 });
 
 const space = (name: string) => spaces.find((s) => s.name === name)!.id;
-const save = (id: string, title: string, spaceName = 'Markets', parentId: string | null = null, json = page(id, title)): PageSave => ({ id, spaceId: space(spaceName), parentId, title, json });
+const save = (id: string, title: string, spaceName = 'Markets', parentId: string | null = null, json = page(id, title)): PageSave => ({ id, spaceId: space(spaceName), parentId, title, json, sidecars: {} });
 const batch = (patch: Partial<FlushBatch>): FlushBatch => ({ spaces, createdSpaces: [], deletedSpaces: [], journalSpaceId: null, saves: [], deletes: [], ...patch });
 const apply = (patch: Partial<FlushBatch>) => applyFlush(root, index, batch(patch), deps());
 const read = (rel: string) => readFile(join(root, rel), 'utf8');
@@ -191,7 +191,7 @@ test('a title cannot write outside its folder', async () => {
 
 test('a page whose file could not be read is never written', async () => {
   await setup({ 'Markets/Bad.json': '{ nope' });
-  const result = await apply({ saves: [{ id: 'bad:Markets/Bad.json', spaceId: space('Markets'), parentId: null, title: 'Bad', json: '{}' }] });
+  const result = await apply({ saves: [{ id: 'bad:Markets/Bad.json', spaceId: space('Markets'), parentId: null, title: 'Bad', json: '{}', sidecars: {} }] });
   expect(result.ok).toBe(false);
   expect(result.error).toBe('Page file is unreadable');
   expect(await read('Markets/Bad.json')).toBe('{ nope');
@@ -199,7 +199,7 @@ test('a page whose file could not be read is never written', async () => {
 
 test('a save to a space that is not there fails alone', async () => {
   await setup({ 'Markets/': '' });
-  const result = await apply({ saves: [{ id: 'x', spaceId: 's_missing', parentId: null, title: 'X', json: '{}' }, save('ok', 'Fine')] });
+  const result = await apply({ saves: [{ id: 'x', spaceId: 's_missing', parentId: null, title: 'X', json: '{}', sidecars: {} }, save('ok', 'Fine')] });
   expect(result.ok).toBe(false);
   expect(result.error).toMatch(/space/i);
   expect(result.paths).toEqual({ ok: 'Markets/Fine.json' });
@@ -221,4 +221,31 @@ test('a sibling whose extension is in capitals, or whose accents are decomposed,
   expect(result.paths).toEqual({ n: 'Markets/Notes 2.json', k: 'Markets/Caf\u00e9 2.json' });
   expect(JSON.parse(await read('Markets/Notes.JSON')).id).toBe('x');
   expect(JSON.parse(await read('Markets/Cafe\u0301.json')).id).toBe('c');
+});
+
+test('a page’s drawing pictures are written in its folder, rewritten only when they change, and removed with the drawing', async () => {
+  await setup({ 'Markets/': '' });
+  await apply({ saves: [{ ...save('p', 'Page'), sidecars: { 'drawing-d1.svg': '<svg>1</svg>' } }] });
+  expect(await read('Markets/Page/drawing-d1.svg')).toBe('<svg>1</svg>');
+  const before = (await stat(join(root, 'Markets/Page/drawing-d1.svg'))).mtimeMs;
+  await new Promise((r) => setTimeout(r, 20));
+  await apply({ saves: [{ ...save('p', 'Page', 'Markets', null, page('p', 'Page!')), sidecars: { 'drawing-d1.svg': '<svg>1</svg>' } }] });
+  expect((await stat(join(root, 'Markets/Page/drawing-d1.svg'))).mtimeMs).toBe(before);
+  await apply({ saves: [save('p', 'Page')] });
+  expect(await list('Markets')).toEqual(['Page.json']);
+});
+
+test('removing pictures leaves the sub-pages in the folder alone', async () => {
+  await setup({ 'Markets/Page.json': page('p', 'Page'), 'Markets/Page/Sub.json': page('s', 'Sub'), 'Markets/Page/drawing-x.svg': '<svg/>' });
+  await apply({ saves: [save('p', 'Page', 'Markets', null, page('p', 'Page 2'))] });
+  expect(await list('Markets/Page')).toEqual(['Sub.json']);
+});
+
+test('a picture with an unsafe name is never written', async () => {
+  await setup({ 'Markets/': '' });
+  const result = await apply({ saves: [{ ...save('p', 'Page'), sidecars: { '../x.svg': 'a', 'drawing-a/b.svg': 'b', 'notes.svg': 'c' } }] });
+  expect(result.ok).toBe(false);
+  expect(result.error).toMatch(/picture/);
+  expect(await list('Markets')).toEqual(['Page.json']);
+  expect(await list('')).toEqual(['.quest', 'Markets']);
 });

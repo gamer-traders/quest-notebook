@@ -1,6 +1,6 @@
-import { mkdir, readdir, readFile, rename, rmdir, stat } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, rmdir, stat } from 'node:fs/promises';
 import { formatJson } from '@shared/formatJson';
-import type { FlushBatch, FlushResult, PageSave } from '@shared/ipc';
+import { SIDECAR_NAME, type FlushBatch, type FlushResult, type PageSave } from '@shared/ipc';
 import { nameKey, safeName, uniqueName } from '@shared/names';
 import { insideRoot, writeFileAtomic } from './paths';
 import { CONFIG_PATH, isIgnoredName, readConfig, type ScanIndex } from './scan';
@@ -161,9 +161,31 @@ export async function applyFlush(root: string, index: ScanIndex, batch: FlushBat
         index.pages.set(save.id, { path: target, mtimeMs: info.mtimeMs, size: info.size, text: save.json });
       }
       paths[save.id] = target;
+      await writeSidecars(target, save.sidecars ?? {});
     } catch (error) {
       errors.push(message(error));
     }
+  }
+
+  /** The page's picture copies, in its folder: written when they differ, and removed when no longer listed. */
+  async function writeSidecars(pagePath: string, sidecars: Record<string, string>) {
+    const folder = (await folderOnDisk(root, pagePath)) ?? folderOfPage(pagePath);
+    const wanted = Object.entries(sidecars).filter(([name]) => {
+      if (SIDECAR_NAME.test(name)) return true;
+      errors.push(`Skipped a drawing picture with an unsafe file name: ${name}`);
+      return false;
+    });
+    if (wanted.length) await mkdir(abs(folder), { recursive: true });
+    for (const [name, text] of wanted) {
+      const file = `${folder}/${name}`;
+      if ((await readFile(abs(file), 'utf8').catch(() => null)) !== text) await writeFileAtomic(abs(file), text);
+    }
+    if (!(await exists(folder))) return;
+    const keep = new Set(wanted.map(([name]) => name));
+    for (const name of await readdir(abs(folder))) {
+      if (SIDECAR_NAME.test(name) && !keep.has(name)) await rm(abs(`${folder}/${name}`));
+    }
+    leftBehind.add(folder);
   }
 
   // ---- A page folder whose last page left is removed. Space folders stay, even empty. ----
