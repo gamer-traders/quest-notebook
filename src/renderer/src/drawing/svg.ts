@@ -1,5 +1,5 @@
 import { DRAWING_WIDTH, type Background, type InkColor, type Stroke } from './model';
-import { strokePath } from './strokes';
+import { outlineOf } from './strokes';
 
 /** The light theme's colours, for the picture copy: pens in each colour's strong ink, the highlighter in its tint. */
 export const LIGHT_COLORS: { pen: Record<InkColor, string>; highlight: Record<InkColor, string>; rule: string; paper: string } = {
@@ -22,7 +22,7 @@ function patternFor(background: Background): string {
 }
 
 function pathFor(stroke: Stroke): string {
-  const d = strokePath(stroke);
+  const d = outlineOf(stroke);
   if (!d) return '';
   const color = stroke.tool === 'highlighter' ? LIGHT_COLORS.highlight[stroke.color] : LIGHT_COLORS.pen[stroke.color];
   const opacity = stroke.tool === 'highlighter' || stroke.tool === 'pencil' ? ` fill-opacity="${OPACITY[stroke.tool]}"` : '';

@@ -2,20 +2,9 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } f
 import type { DrawingCell } from '../types';
 import { uid } from '../lib/cells';
 import { DRAWING_WIDTH, SIZES, type PenTool, type Stroke } from './model';
-import { strokePath, strokesHit } from './strokes';
+import { outlineOf, strokePath, strokesHit } from './strokes';
 import { RULE_GAP } from './svg';
 import type { PenSettings } from './penSettings';
-
-// A finished stroke never changes, so its outline is worked out once.
-const paths = new WeakMap<Stroke, string>();
-const pathOf = (stroke: Stroke) => {
-  let d = paths.get(stroke);
-  if (d === undefined) {
-    d = strokePath(stroke);
-    paths.set(stroke, d);
-  }
-  return d;
-};
 
 /** The pen's eraser end: Wacom reports it as button 5, held down as buttons bit 32. */
 const isEraserEnd = (e: PointerEvent | ReactPointerEvent) => e.pointerType === 'pen' && (e.button === 5 || (e.buttons & 32) !== 0);
@@ -158,13 +147,13 @@ export function DrawingCanvas({ drawing, pen, onStroke, onErase, patternId }: Pr
       )}
       <g className="drawing-highlights">
         {shown.filter((s) => s.tool === 'highlighter').map((s) => (
-          <path key={s.id} d={pathOf(s)} className={`hl-${s.color}`} />
+          <path key={s.id} d={outlineOf(s)} className={`hl-${s.color}`} />
         ))}
         {liveD && liveTool === 'highlighter' && <path d={liveD} className={`hl-${pen.color}`} />}
       </g>
       <g className="drawing-ink">
         {shown.filter((s) => s.tool !== 'highlighter').map((s) => (
-          <path key={s.id} d={pathOf(s)} className={`ink-${s.color} tool-${s.tool}`} />
+          <path key={s.id} d={outlineOf(s)} className={`ink-${s.color} tool-${s.tool}`} />
         ))}
         {liveD && liveTool !== 'highlighter' && <path d={liveD} className={`ink-${pen.color} tool-${liveTool}`} />}
       </g>

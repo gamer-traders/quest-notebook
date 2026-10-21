@@ -46,7 +46,8 @@ const triples = (points: number[]): [number, number, number][] => {
   return out;
 };
 
-const pair = (x: number, y: number) => `${round(x, 2)},${round(y, 2)}`;
+// A tenth of a unit is finer than any screen shows the drawing, and keeps pictures small.
+const pair = (x: number, y: number) => `${round(x, 1)},${round(y, 1)}`;
 
 /** A stroke as an SVG path: the outline perfect-freehand draws around its points, filled. */
 export function strokePath(stroke: Pick<Stroke, 'tool' | 'size' | 'pressure' | 'points'>, last = true): string {
@@ -98,4 +99,29 @@ export function strokeBottom(stroke: Stroke): number {
   let bottom = 0;
   for (let i = 1; i < stroke.points.length; i += 3) bottom = Math.max(bottom, stroke.points[i]);
   return bottom + stroke.size / 2;
+}
+
+// A finished stroke never changes, so its outline and its written points are worked out once, and shared by the
+// canvas, the picture copy and the page file.
+const outlines = new WeakMap<Stroke, string>();
+const encoded = new WeakMap<Stroke, string>();
+
+/** A finished stroke's outline path, worked out once. */
+export function outlineOf(stroke: Stroke): string {
+  let d = outlines.get(stroke);
+  if (d === undefined) {
+    d = strokePath(stroke);
+    outlines.set(stroke, d);
+  }
+  return d;
+}
+
+/** A finished stroke's points as the page file writes them, worked out once. */
+export function encodedPoints(stroke: Stroke): string {
+  let text = encoded.get(stroke);
+  if (text === undefined) {
+    text = encodePoints(stroke.points);
+    encoded.set(stroke, text);
+  }
+  return text;
 }

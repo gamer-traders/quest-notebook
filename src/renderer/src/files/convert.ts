@@ -2,7 +2,7 @@ import type { FileBlock, FileCandle, FileChart, FileLook, FilePoint, PageFile } 
 import { formatJson } from '@shared/formatJson';
 import type { CallCell, ChartCell, DrawingCell, Interval, ItemData, MarkLook, Notebook, PlanCell } from '../types';
 import { BACKGROUNDS, INK_COLORS, NEW_HEIGHT, PEN_TOOLS, SIZES, type Stroke } from '../drawing/model';
-import { decodePoints, encodePoints } from '../drawing/strokes';
+import { decodePoints, encodedPoints } from '../drawing/strokes';
 import type { NotebookLinkInline, PageBlock } from '../page/blockTypes';
 import type { Bar } from '../lib/market';
 import { INTERVALS } from '../lib/market';
@@ -99,7 +99,7 @@ function itemToFile(item: ItemData): FileBlock {
         id: item.id,
         height: item.height,
         background: item.background,
-        strokes: item.strokes.map((s) => ({ tool: s.tool, color: s.color, size: s.size, pressure: s.pressure, points: encodePoints(s.points) })),
+        strokes: item.strokes.map((s) => ({ tool: s.tool, color: s.color, size: s.size, pressure: s.pressure, points: encodedPoints(s) })),
       };
   }
 }
