@@ -1,5 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Markdown, { type Components } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { ChatAction, ChatMessage, FileChange } from '@shared/ipc';
 import { useStore } from '../store';
 import { displayTitle } from '../page/tree';
@@ -56,7 +57,7 @@ function PageLine({ pageId, className, children }: { pageId: string | null; clas
 }
 
 // Links open in the browser, and only web links: nothing in a reply can make the app go somewhere.
-// Pictures aren't fetched; their words are shown instead.
+// Pictures aren't fetched; their words are shown instead. Tables, task lists and strikethrough come from GFM.
 const MARKDOWN: Components = {
   a: ({ href, children }) =>
     href && isWebUrl(href) ? (
@@ -76,10 +77,12 @@ const MARKDOWN: Components = {
   img: ({ alt }) => <span className="claude-img">{alt ? `[image: ${alt}]` : '[image]'}</span>,
 };
 
+const REMARK = [remarkGfm];
+
 const ReplyText = memo(function ReplyText({ text }: { text: string }) {
   return (
     <div className="claude-md">
-      <Markdown skipHtml components={MARKDOWN}>
+      <Markdown skipHtml remarkPlugins={REMARK} components={MARKDOWN}>
         {text}
       </Markdown>
     </div>

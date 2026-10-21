@@ -123,8 +123,8 @@ export async function createAndOpen(parentDir: string, name: string, samples: bo
 /** At start: listens to main, and shows the workspace main reopened, if any. */
 export async function bootWorkspace(): Promise<void> {
   const { workspace, app, claude } = window.quest;
-  // Also listens for Claude's events: once, for the window's whole life.
-  bindClaude(claude);
+  // Also listens for Claude's events: once, for the window's whole life. Each turn saves everything first.
+  bindClaude(claude, { flush: flushWorkspace });
   workspace.onDiskChange(applyDisk);
   workspace.onLost((message) => {
     sync?.stop();

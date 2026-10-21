@@ -408,6 +408,53 @@
   border-top: 1px solid var(--rule);
 }
 
+/* A table scrolls sideways on its own rather than widen the reply. */
+.claude-md table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0 0 0.6em;
+  border-collapse: collapse;
+  font-size: 13px;
+  /* Numbers and words stay whole in a cell; a wide table scrolls instead. */
+  overflow-wrap: normal;
+}
+
+.claude-md th,
+.claude-md td {
+  padding: 3px 8px;
+  border: 1px solid var(--rule);
+  text-align: left;
+  vertical-align: top;
+}
+
+.claude-md th {
+  background: var(--paper);
+  font-weight: 600;
+}
+
+.claude-md del {
+  color: var(--pencil);
+}
+
+/* Task lists: the box in place of the bullet. It shows; it can't be ticked here. */
+.claude-md .contains-task-list {
+  padding-left: 0;
+  list-style: none;
+}
+
+.claude-md .task-list-item input[type='checkbox'] {
+  margin: 0 6px 0 0;
+  vertical-align: -1px;
+  accent-color: var(--ink-soft);
+  /* Disabled, but still easy to read as done or not. */
+  opacity: 1;
+}
+
+.claude-md .task-list-item .contains-task-list {
+  padding-left: 1.3em;
+}
+
 .claude-link-off {
   text-decoration: underline dotted;
 }

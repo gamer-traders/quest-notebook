@@ -125,6 +125,20 @@ test('a reply is Markdown without raw HTML, and only its web links open, in the 
   expect(host.querySelector('.claude-msg-error')?.textContent).toBe('Usage limit reached');
 });
 
+test('a reply renders GFM tables, task lists and strikethrough', async () => {
+  const text = '| Level | Held |\n| --- | --- |\n| 62,400 | 3 times |\n\n- [x] Mark the weekly open\n- [ ] Note volume\n\n~~old idea~~';
+  useClaude.setState({ chat: chat([{ id: 'm1', role: 'assistant', text, created: 'c' }]) });
+  await render();
+  expect([...host.querySelectorAll('.claude-md th')].map((th) => th.textContent)).toEqual(['Level', 'Held']);
+  expect([...host.querySelectorAll('.claude-md td')].map((td) => td.textContent)).toEqual(['62,400', '3 times']);
+  const boxes = [...host.querySelectorAll<HTMLInputElement>('.claude-md .task-list-item input[type="checkbox"]')];
+  expect(boxes.map((b) => [b.checked, b.disabled])).toEqual([
+    [true, true],
+    [false, true],
+  ]);
+  expect(host.querySelector('.claude-md del')?.textContent).toBe('old idea');
+});
+
 test('changed lines open their page and undo one by one or all together; undone lines are struck through', async () => {
   const reply: ChatMessage = {
     id: 'm1',

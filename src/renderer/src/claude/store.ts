@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import type { Chat, ChatAction, ChatMessage, ChatReference, ChatSummary, ClaudeEvent, ClaudeStatus, QuestApi } from '@shared/ipc';
-import { flushWorkspace } from '../workspace/session';
 
 type Api = QuestApi['claude'];
 
@@ -94,17 +93,18 @@ interface ClaudeState extends PanelSettings {
 }
 
 let api: Api | null = null;
-let flush: () => Promise<void> = flushWorkspace;
+/** Saves everything before a turn. The app passes the workspace's own at boot; this module doesn't import it. */
+let flush: () => Promise<void> = async () => {};
 let confirmAsk: (text: string) => boolean = (text) => window.confirm(text);
 /** Events that came while `send` was still waiting for main to say which message they belong to. */
 let queued: ClaudeEvent[] = [];
 
 const emptyStreaming = (): Streaming => ({ text: [], actions: [] });
 
-/** Connects the store to main. Task 8 calls it at boot with `window.quest.claude`; tests give a fake. */
+/** Connects the store to main. `bootWorkspace` calls it with `window.quest.claude` and `flushWorkspace`; tests give fakes. */
 export function bindClaude(claude: Api, deps: { flush?: () => Promise<void>; confirm?: (text: string) => boolean } = {}): void {
   api = claude;
-  flush = deps.flush ?? flushWorkspace;
+  flush = deps.flush ?? (async () => {});
   confirmAsk = deps.confirm ?? ((text) => window.confirm(text));
   queued = [];
   claude.onEvent((e) => useClaude.getState().onEvent(e));
