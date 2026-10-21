@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { access, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
@@ -278,4 +279,26 @@ test('if a drawing file can’t be written, the page file isn’t either', async
   const result = await apply({ saves: [{ ...save('p', 'Page', 'Markets', null, page('p', 'Page, strokes moved out')), sidecars: { 'drawing-d1.svg': '<svg/>' } }] });
   expect(result.ok).toBe(false);
   expect(await read('Markets/Page.json')).toBe(old);
+});
+
+test('renaming a page onto a name a drawings folder already has picks a free name', async () => {
+  await setup({ 'Markets/Bar.json': page('p', 'Bar'), 'Markets/Bar/drawing-d1.svg': '<svg>1</svg>', 'Markets/Foo/drawing-zz.svg': '<svg>zz</svg>' });
+  const result = await apply({ saves: [save('p', 'Foo', 'Markets', null, page('p', 'Foo'))] });
+  expect(result).toMatchObject({ ok: true, paths: { p: 'Markets/Foo 2.json' } });
+  expect(await list('Markets')).toEqual(['Foo', 'Foo 2', 'Foo 2.json']);
+  expect(await list('Markets/Foo 2')).toEqual(['drawing-d1.svg']);
+  expect(await list('Markets/Foo')).toEqual(['drawing-zz.svg']);
+});
+
+test.skipIf(process.platform !== 'darwin')('if a page’s folder can’t move, its file moves back', async () => {
+  await setup({ 'Markets/A.json': page('a', 'A'), 'Markets/A/drawing-d1.svg': '<svg>1</svg>' });
+  execFileSync('chflags', ['uchg', join(root, 'Markets/A')]);
+  try {
+    const result = await apply({ saves: [save('a', 'B', 'Markets', null, page('a', 'B'))] });
+    expect(result.ok).toBe(false);
+    expect(await list('Markets')).toEqual(['A', 'A.json']);
+    expect(index.pages.get('a')!.path).toBe('Markets/A.json');
+  } finally {
+    execFileSync('chflags', ['nouchg', join(root, 'Markets/A')]);
+  }
 });

@@ -138,9 +138,14 @@ export async function applyFlush(root: string, index: ScanIndex, batch: FlushBat
         dir = (await folderOnDisk(root, parent.path)) ?? folderOfPage(parent.path);
       }
 
-      const own = entry && parentDir(entry.path) === dir ? baseOf(entry.path) : null;
-      const siblings = (await exists(dir)) ? (await readdir(abs(dir))).filter((n) => n.toLowerCase().endsWith(JSON_EXT) && !isIgnoredName(n)).map((n) => n.slice(0, -JSON_EXT.length)) : [];
-      const name = uniqueName(safeName(save.title), siblings.filter((n) => n !== own));
+      // A page needs its name free twice: for its file, and for the folder beside it. Any folder or other file
+      // there, such as drawings a page left behind, takes the name too. The page's own file and folder don't.
+      const own = entry && parentDir(entry.path) === dir ? nameKey(baseOf(entry.path)) : null;
+      const taken = (await exists(dir) ? await readdir(abs(dir)) : [])
+        .filter((n) => !isIgnoredName(n))
+        .map((n) => (n.toLowerCase().endsWith(JSON_EXT) ? n.slice(0, -JSON_EXT.length) : n))
+        .filter((n) => nameKey(n) !== own);
+      const name = uniqueName(safeName(save.title), taken);
       const target = `${dir}/${name}${JSON_EXT}`;
 
       if (!entry) {
@@ -148,9 +153,19 @@ export async function applyFlush(root: string, index: ScanIndex, batch: FlushBat
       } else if (entry.path !== target) {
         await mkdir(abs(dir), { recursive: true });
         const fromFolder = (await folderOnDisk(root, entry.path)) ?? folderOfPage(entry.path);
+        const hasFolder = await exists(fromFolder);
+        if (hasFolder && nameKey(fromFolder) !== nameKey(folderOfPage(target)) && (await exists(folderOfPage(target)))) {
+          throw new Error(`Couldn't move “${save.title}”: ${folderOfPage(target)} is in the way`);
+        }
         await move(entry.path, target);
-        if (await exists(fromFolder)) {
-          await move(fromFolder, folderOfPage(target));
+        if (hasFolder) {
+          try {
+            await move(fromFolder, folderOfPage(target));
+          } catch (error) {
+            // The page and its folder stay together: the file goes back where it was.
+            await move(target, entry.path);
+            throw error;
+          }
           repoint(fromFolder, folderOfPage(target));
         }
         leftBehind.add(parentDir(entry.path));
