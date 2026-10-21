@@ -3,7 +3,7 @@ import { formatJson } from '@shared/formatJson';
 import { SIDECAR_NAME, type FlushBatch, type FlushResult, type PageSave } from '@shared/ipc';
 import { nameKey, safeName, uniqueName } from '@shared/names';
 import { insideRoot, writeFileAtomic } from './paths';
-import { CONFIG_PATH, isIgnoredName, readConfig, type ScanIndex } from './scan';
+import { CONFIG_PATH, isIgnoredName, readConfig, type FileState, type ScanIndex } from './scan';
 
 export interface ApplyDeps {
   /** Moves a file or folder to the system Trash. */
@@ -157,13 +157,14 @@ export async function applyFlush(root: string, index: ScanIndex, batch: FlushBat
         entry.path = target;
       }
 
+      // Drawing files first: a page that stops holding its strokes is only written once they're safe in their file.
+      const sidecars = await writeSidecars(save.id, target, save.sidecars ?? {}, save.removedSidecars ?? []);
       if (save.json !== undefined && entry?.text !== save.json) {
         await writeFileAtomic(abs(target), save.json);
         const info = await stat(abs(target));
-        index.pages.set(save.id, { path: target, mtimeMs: info.mtimeMs, size: info.size, text: save.json });
+        index.pages.set(save.id, { path: target, mtimeMs: info.mtimeMs, size: info.size, text: save.json, sidecars });
       }
       paths[save.id] = target;
-      await writeSidecars(save.id, target, save.sidecars ?? {}, save.removedSidecars ?? []);
     } catch (error) {
       errors.push(message(error));
     }
@@ -173,7 +174,7 @@ export async function applyFlush(root: string, index: ScanIndex, batch: FlushBat
    * The page's drawing files, in its folder: written when their text differs, and moved to the Trash when the
    * save names them as removed. They're the drawings themselves, so nothing else is touched or deleted for good.
    */
-  async function writeSidecars(id: string, pagePath: string, sidecars: Record<string, string>, removed: string[]) {
+  async function writeSidecars(id: string, pagePath: string, sidecars: Record<string, string>, removed: string[]): Promise<Record<string, FileState>> {
     const entry = index.pages.get(id);
     const known = { ...(entry?.sidecars ?? {}) };
     const folder = (await folderOnDisk(root, pagePath)) ?? folderOfPage(pagePath);
@@ -198,6 +199,7 @@ export async function applyFlush(root: string, index: ScanIndex, batch: FlushBat
       leftBehind.add(folder);
     }
     if (entry) entry.sidecars = known;
+    return known;
   }
 
   // ---- A page folder whose last page left is removed. Space folders stay, even empty. ----

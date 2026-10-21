@@ -270,3 +270,12 @@ test('a pictures-only save for a page main has never seen does nothing', async (
   expect(result.ok).toBe(true);
   expect(await list('Markets')).toEqual([]);
 });
+
+test('if a drawing file can’t be written, the page file isn’t either', async () => {
+  // Moving strokes out of a page must never drop them: the drawing file goes first.
+  const old = page('p', 'Page');
+  await setup({ 'Markets/Page.json': old, 'Markets/Page': 'a file where the folder should be' });
+  const result = await apply({ saves: [{ ...save('p', 'Page', 'Markets', null, page('p', 'Page, strokes moved out')), sidecars: { 'drawing-d1.svg': '<svg/>' } }] });
+  expect(result.ok).toBe(false);
+  expect(await read('Markets/Page.json')).toBe(old);
+});

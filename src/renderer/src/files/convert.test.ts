@@ -200,3 +200,19 @@ test('a drawing saved with its strokes inside the page, as before, is read and m
   expect(repaired).toBe(true);
   expect([...drawingsToWrite]).toEqual(['d2']);
 });
+
+test('strokes saved inside the page win over an old picture beside it that has no stroke data', () => {
+  // The earlier build kept strokes in the page and wrote a picture without them.
+  const raw = { blocks: [{ type: 'drawing', id: 'd3', height: 400, background: 'blank', strokes: [{ tool: 'pen', color: 'ink', size: 3, pressure: true, points: '10,10,0.5 20,20,0.9' }] }] };
+  const oldPicture = '<svg viewBox="0 0 1000 400"><path data-tool="pen" d="M10,10 Q 20,20 30,30 Z" fill="#17202a"/></svg>';
+  const { notebook, drawingsToWrite } = fileToPage(raw, nm(), { 'drawing-d3.svg': oldPicture });
+  expect((notebook.items.d3 as DrawingCell).strokes).toHaveLength(1);
+  expect([...drawingsToWrite]).toEqual(['d3']);
+});
+
+test('a picture with shapes but no stroke data is shown empty and never written over by itself', () => {
+  const foreign = '<svg viewBox="0 0 1000 400"><path d="M0 0 L100 100" stroke="black"/></svg>';
+  const { notebook, drawingsToWrite } = fileToPage({ blocks: [{ type: 'drawing', id: 'd4', file: 'drawing-d4.svg' }] }, nm(), { 'drawing-d4.svg': foreign });
+  expect((notebook.items.d4 as DrawingCell).strokes).toEqual([]);
+  expect([...drawingsToWrite]).toEqual([]);
+});

@@ -277,19 +277,24 @@ interface DrawingContext {
  * inside the page, are read as well as can be, and the drawing is noted for writing in the app's own form.
  */
 function drawingFromFile(raw: Raw, id: string, ctx: DrawingContext): DrawingCell {
+  // Strokes still inside the page are the drawing, whatever picture sits beside it: the earlier build wrote
+  // pictures without their strokes.
+  if (Array.isArray(raw.strokes)) {
+    ctx.movedOut = true;
+    ctx.toWrite.add(id);
+    return inlineDrawing(raw, id);
+  }
   const named = typeof raw.file === 'string' && SIDECAR_NAME.test(raw.file) ? raw.file : drawingFileName(id);
   const text = ctx.files[named] ?? ctx.files[drawingFileName(id)];
   const read = text === undefined ? null : drawingFromSvg(text);
   if (read) {
     const drawing: DrawingCell = { id, type: 'drawing', ...read };
-    if (drawingToSvg(drawing) !== text || named !== drawingFileName(id)) ctx.toWrite.add(id);
+    // A picture with shapes but no stroke data isn't one the app can redraw, so it's never written over by itself.
+    const foreign = read.strokes.length === 0 && /<path\b/i.test(text!);
+    if (!foreign && (drawingToSvg(drawing) !== text || named !== drawingFileName(id))) ctx.toWrite.add(id);
     return drawing;
   }
   ctx.toWrite.add(id);
-  if (Array.isArray(raw.strokes)) {
-    ctx.movedOut = true;
-    return inlineDrawing(raw, id);
-  }
   return { id, type: 'drawing', height: NEW_HEIGHT, background: 'blank', strokes: [] };
 }
 
