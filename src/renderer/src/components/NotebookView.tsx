@@ -6,7 +6,7 @@ import { useStore } from '../store';
 import { NotebookEditor } from '../editor/NotebookEditor';
 import { toggleClaude } from '../claude/ClaudePanel';
 import { claudeShortcutLabel } from '../claude/panel';
-import { useClaude } from '../claude/store';
+import { useClaude, useLocked } from '../claude/store';
 import { IS_MAC } from './SettingsDialog';
 import { Backlinks } from './Backlinks';
 import { PagePath } from './PagePath';
@@ -24,6 +24,8 @@ export function NotebookView() {
   const focusTitleId = useStore((s) => s.focusTitleId);
   const revision = useStore((s) => (nb ? (s.diskRevision[nb.id] ?? 0) : 0));
   const claudeOpen = useClaude((s) => s.open);
+  // Claude is working on this page: it reads, scrolls and follows links, but takes no edits until the turn ends.
+  const locked = useLocked(nb?.id);
   const titleRef = useRef<HTMLInputElement>(null);
 
   // A page just made from the sidebar or the panel opens with its title ready to type.
@@ -90,6 +92,7 @@ export function NotebookView() {
           value={nb.title}
           placeholder="Untitled"
           aria-label="Notebook title"
+          readOnly={locked}
           onChange={(e) => updateNotebook(nb.id, { title: e.target.value })}
         />
         <div className="notebook-meta">
@@ -118,8 +121,17 @@ export function NotebookView() {
       {/* The flash is a style rule rather than a class, so the editor's own DOM is never touched. */}
       {flash && <style>{`.page-editor [data-id="${CSS.escape(flash)}"] > .bn-block { animation: flash 1.6s ease-out; border-radius: var(--radius); }`}</style>}
 
+      {locked && (
+        <div className="claude-lock" role="status">
+          <span>Claude is working on this page…</span>
+          <button className="quiet" onClick={() => useClaude.getState().stop()}>
+            Stop
+          </button>
+        </div>
+      )}
+
       {/* A change on disk starts the editor over with the new page. */}
-      <NotebookEditor key={`${nb.id}:${revision}`} notebook={nb} />
+      <NotebookEditor key={`${nb.id}:${revision}`} notebook={nb} editable={!locked} />
       <Backlinks notebookId={nb.id} />
     </article>
   );

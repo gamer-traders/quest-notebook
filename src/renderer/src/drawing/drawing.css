@@ -88,6 +88,11 @@
   cursor: none;
 }
 
+/* Claude is working on the page: no pen cursor, and a finger on the drawing scrolls the page. */
+.drawing-canvas.is-locked {
+  pointer-events: none;
+}
+
 .drawing-rule {
   fill: none;
   stroke: var(--rule);

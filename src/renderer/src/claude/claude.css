@@ -803,3 +803,35 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/*
+  Outside the panel: the page Claude is working on stays read-only until the turn ends. The bar above it is
+  hatched like anything else that's locked for now (a plan before the reveal), with Stop at its end.
+*/
+
+.claude-lock {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+  /* In line with the title and the page's text. */
+  margin: 0 0 14px var(--page-indent);
+  padding: 4px 4px 4px 12px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background:
+    repeating-linear-gradient(135deg, var(--hatch) 0 1px, transparent 1px 8px),
+    var(--paper);
+  color: var(--ink-soft);
+  font-size: 14px;
+}
+
+.claude-lock button {
+  font-size: 13px;
+}
+
+/* The title can't be typed in meanwhile, so it doesn't offer to be. */
+.notebook-title:read-only:hover {
+  border-color: transparent;
+}

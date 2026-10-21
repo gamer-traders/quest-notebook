@@ -124,6 +124,15 @@
   cursor: auto;
 }
 
+/* Holds a block's contents without drawing a box of its own. It's there to disable them all at once while Claude works on the page. */
+.item-fields {
+  display: contents;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
 /* Dragging across a chart pans it, so it shouldn't select the page's text on the way. */
 .item-block .chart-frame {
   user-select: none;

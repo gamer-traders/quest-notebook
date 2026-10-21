@@ -11,8 +11,11 @@ import {
   SideMenu,
   SideMenuController,
   SuggestionMenuController,
+  useBlockNoteEditor,
+  useComponentsContext,
   useCreateBlockNote,
   useDictionary,
+  useEditorState,
 } from '@blocknote/react';
 import { BlockNoteView } from '@blocknote/mantine';
 import type { Transaction } from 'prosemirror-state';
@@ -23,7 +26,7 @@ import type { PageBlock } from '../page/blockTypes';
 import { createSaver } from '../lib/saver';
 import { unsavedEditors } from './pending';
 import { useStore } from '../store';
-import { NotebookContext } from './NotebookContext';
+import { NotebookContext, useNotebookId } from './NotebookContext';
 import { itemBlocksExtension } from './itemExtension';
 import { LINK_TRIGGER, linkMenuOpensHere, pageExtensions } from './inlineRules';
 import { linkChoices, type LinkChoice } from './linkItems';
@@ -33,12 +36,32 @@ import { pastePage } from './paste';
 import { HighlightButton } from './HighlightButton';
 import { TurnIntoSelect } from './TurnIntoSelect';
 import { schema, type PageEditor } from './schema';
+import { displayTitle } from '../page/tree';
+import { askClaude } from '../claude/ClaudePanel';
 
 const PLACEHOLDER = 'Type / for blocks, [[ to link a notebook';
 
 const dictionary = { ...en, placeholders: { ...en.placeholders, default: PLACEHOLDER, emptyDocument: PLACEHOLDER } };
 
-/** The selection toolbar: turn into, the four text styles, the highlighter and a link. No text colours. */
+/** Puts the selected words in Claude's message box, to ask about. Shown on a read-only page too. */
+function AskClaudeButton() {
+  const Components = useComponentsContext()!;
+  const editor = useBlockNoteEditor();
+  const pageId = useNotebookId();
+  const text = useEditorState({ editor, selector: ({ editor }) => editor.getSelectedText() });
+  if (!text.trim()) return null;
+  const ask = () => {
+    const title = useStore.getState().notebooks.find((n) => n.id === pageId)?.title ?? '';
+    askClaude({ kind: 'selection', pageId, title: displayTitle(title), text });
+  };
+  return (
+    <Components.FormattingToolbar.Button className="bn-button" label="Ask Claude" mainTooltip="Ask Claude about the selection" onClick={ask}>
+      Ask Claude
+    </Components.FormattingToolbar.Button>
+  );
+}
+
+/** The selection toolbar: turn into, the four text styles, the highlighter, a link and Ask Claude. No text colours. */
 function PageToolbar() {
   return (
     <FormattingToolbar>
@@ -49,6 +72,7 @@ function PageToolbar() {
       <BasicTextStyleButton basicTextStyle="strike" />
       <HighlightButton />
       <CreateLinkButton />
+      <AskClaudeButton />
     </FormattingToolbar>
   );
 }
@@ -68,7 +92,8 @@ const PageSideMenu = () => <SideMenu dragHandleMenu={PageDragHandleMenu} />;
 // A '/' in code is part of the code.
 const slashOpensHere = (tr: Transaction) => !tr.selection.$from.parent.type.spec.code;
 
-export function NotebookEditor({ notebook }: { notebook: Notebook }): JSX.Element {
+/** `editable` false makes the page read-only: it can still be scrolled, selected, and its links followed. */
+export function NotebookEditor({ notebook, editable = true }: { notebook: Notebook; editable?: boolean }): JSX.Element {
   const theme = useStore((s) => s.theme);
   const notebookId = notebook.id;
 
@@ -126,6 +151,7 @@ export function NotebookEditor({ notebook }: { notebook: Notebook }): JSX.Elemen
         editor={editor}
         theme={theme}
         className="page-editor"
+        editable={editable}
         slashMenu={false}
         formattingToolbar={false}
         sideMenu={false}

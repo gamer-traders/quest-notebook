@@ -148,6 +148,18 @@ test('undo with conflicts asks, retries with force on only those paths, and not 
   expect(api.undo).toHaveBeenCalledTimes(1);
 });
 
+test('undo saves first, so words typed just before it reach the disk before the files are restored', async () => {
+  useClaude.setState({ chat: chatOf('c1') });
+  const order: string[] = [];
+  flush.mockImplementation(async () => void order.push('flush'));
+  api.undo.mockImplementation(async () => {
+    order.push('undo');
+    return { undone: [], conflicts: [] };
+  });
+  await useClaude.getState().undo('m1', null);
+  expect(order).toEqual(['flush', 'undo']);
+});
+
 test('markNotApplied records per running message once, and does nothing otherwise', async () => {
   useClaude.getState().markNotApplied('p1');
   expect(useClaude.getState().notApplied).toEqual({});

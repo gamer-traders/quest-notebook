@@ -5,6 +5,7 @@ import { useStore } from '../store';
 import type { DrawingCell } from '../types';
 import { unsavedEditors } from '../editor/pending';
 import type { PageBlock } from '../page/blockTypes';
+import { useClaude } from '../claude/store';
 import { applyDisk, flushWorkspace, startWorkspace, stopWorkspace } from './session';
 
 const file = (id: string, title: string, text: string) => ({ id, title, position: 0, created: '2026-10-20T00:00:00Z', updated: '2026-10-20T00:00:00Z', blocks: [{ type: 'paragraph', text }] });
@@ -126,4 +127,22 @@ test('a drawing file whose block was removed on disk is left alone', async () =>
   applyDisk({ seq: 2, spaces: snapshot.spaces, journalSpaceId: null, pages: [{ ...snapshot.pages[1], file: file('b', 'B', 'no drawing now'), drawings: { 'drawing-d1.svg': svg } }], removed: [] });
   await flushWorkspace();
   expect(batches.flatMap((b) => b.saves).filter((s) => s.id === 'b')).toEqual([]);
+});
+
+const pageC = { id: 'c', spaceId: 'sm', parentId: null, path: 'Markets/C.json', mtimeMs: 0, file: file('c', 'C', 'new') };
+
+test("during a turn, a change skipped for a page's unsaved edits is marked as not applied to the reply", () => {
+  useClaude.setState({ running: { chatId: 'c1', messageId: 'm1', lockedPageId: null } });
+  useStore.getState().updateNotebook('a', { title: 'A edited' });
+  useStore.getState().updateNotebook('b', { title: 'B edited' });
+  applyDisk({ seq: 1, spaces: snapshot.spaces, journalSpaceId: null, pages: [{ ...snapshot.pages[0], file: file('a', 'A', 'from Claude') }, pageC], removed: ['b'] });
+  // a and b keep their edits; c had none, so it came in.
+  expect(useClaude.getState().notApplied).toEqual({ m1: ['a', 'b'] });
+  expect(useStore.getState().notebooks.some((n) => n.id === 'c')).toBe(true);
+});
+
+test('with no turn running, a skipped change is not marked', () => {
+  useStore.getState().updateNotebook('a', { title: 'A edited' });
+  applyDisk({ seq: 1, spaces: snapshot.spaces, journalSpaceId: null, pages: [{ ...snapshot.pages[0], file: file('a', 'A', 'from outside') }], removed: [] });
+  expect(useClaude.getState().notApplied).toEqual({});
 });

@@ -263,6 +263,9 @@ export const useClaude = create<ClaudeState>((set, get) => {
     undo: async (messageId, paths) => {
       const chat = get().chat;
       if (!api || !chat) return;
+      // Words typed just before reach the disk first. The undo then sees them as a change since Claude's reply and asks,
+      // instead of the save landing over the restored file.
+      await flush();
       const first = await api.undo(chat.id, messageId, paths, false);
       if (first.conflicts.length && confirmAsk("These pages changed since Claude's reply. Undo anyway?")) {
         await api.undo(chat.id, messageId, first.conflicts, true);
@@ -281,3 +284,9 @@ export const useClaude = create<ClaudeState>((set, get) => {
     },
   };
 });
+
+/** True for the page a running turn started on: it stays read-only until the turn ends. */
+export const isLocked = (state: Pick<ClaudeState, 'running'>, pageId: string | null | undefined): boolean =>
+  !!pageId && state.running?.lockedPageId === pageId;
+
+export const useLocked = (pageId: string | null | undefined): boolean => useClaude((s) => isLocked(s, pageId));

@@ -1,6 +1,6 @@
 import './claude.css';
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type RefObject } from 'react';
-import type { ClaudeStatus } from '@shared/ipc';
+import type { ChatReference, ClaudeStatus } from '@shared/ipc';
 import { useStore } from '../store';
 import { IS_MAC } from '../components/SettingsDialog';
 import { Composer, focusPage, type ComposerHandle } from './Composer';
@@ -21,6 +21,14 @@ export function toggleClaude(): void {
     focusOnOpen = true;
     setOpen(true);
   }
+}
+
+/** Ask Claude about part of a page: it goes with the next message, and the caret goes to the message box. */
+export function askClaude(ref: ChatReference): void {
+  const { open, attach } = useClaude.getState();
+  focusOnOpen = !open;
+  attach(ref);
+  if (open) document.querySelector<HTMLElement>('.claude-panel .claude-input')?.focus();
 }
 
 const QUICK_ACTIONS = ['Summarize this page', 'Tidy this page', 'Make a checklist from this page', "Turn this week's journal into a lesson page"];

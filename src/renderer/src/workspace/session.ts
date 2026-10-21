@@ -56,6 +56,10 @@ export function applyDisk(delta: DiskDelta): void {
     pages: delta.pages.filter((p) => !pending.has(p.id)),
     removed: delta.removed.filter((id) => !pending.has(id)),
   };
+  // During a turn, Claude's reply says which of its changes are about to be saved over this way.
+  for (const id of [...delta.pages.map((p) => p.id), ...delta.removed]) {
+    if (pending.has(id)) useClaude.getState().markNotApplied(id);
+  }
   const { repaired, drawingsToWrite } = deltaToNotebooks(filtered, current);
   sync.applyFromDisk(() => useStore.getState().applyDiskDelta(filtered), delta.seq);
   // Pages renamed through their file name, or missing fields, are written back whole.
