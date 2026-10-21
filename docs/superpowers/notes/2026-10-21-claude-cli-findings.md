@@ -8,8 +8,7 @@ workspace. Fixtures are in `src/main/claude/__fixtures__/`; the rules that work 
 Fixtures: `read-and-edit.jsonl` (read + edit + create SVG), `denied.jsonl` (the default-mode denial
 run), `resume.jsonl` (second turn with `--resume`). They are the full stdout, untrimmed. The scratch
 root was rewritten: `<scratchpad>/cli-lab/ws` -> `/WS`, `<scratchpad>/cli-lab` -> `/LAB` (so the
-file outside the workspace is `/LAB/outside.json`). Path fragments split across `input_json_delta`
-events (`"e/scratchpad/"`) were left as they are. Scrubbed: nothing needed it. No email, organisation
+file outside the workspace is `/LAB/outside.json`). The path was also split across `input_json_delta` fragments, so within each tool-input block the fragments were joined, rewritten, and emitted as one `input_json_delta` in place of the first fragment (the rest dropped); the assembled input matches the later `assistant` tool_use (it omits defaulted fields such as `replace_all`). Scrubbed: nothing needed it. No email, organisation
 name or org/account UUID appears in the three fixtures (grepped); those only appear in
 `claude auth status` output and in a SessionStart hook output, which are not committed. The
 uuid/session ids in the fixtures are kept. Never commit `auth status` output: it contains the email
@@ -25,7 +24,7 @@ Use default permission mode with command-line allow and deny rules, plus `--rest
       --allowedTools Read Glob Grep "Edit(/*/**/*.json)" "Edit(/*/**/drawing-*.svg)" \
       --disallowedTools "Edit(/.quest/**)"
 
-with the workspace folder as the working directory, stdin closed (`< /dev/null`), and
+plus `--strict-mcp-config` (decided, untested here; see Process and flags), with the workspace folder as the working directory, stdin closed (`< /dev/null`), and
 `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` unset. Do not use `acceptEdits` plus a `--settings`
 deny file: it leaked (see Permissions).
 
@@ -36,21 +35,22 @@ deny file: it leaked (see Permissions).
 - `--verbose` is needed for stream-json in `-p`. `--include-partial-messages` adds the `stream_event`s.
 - Exit code: only recorded for the SIGINT run (0, normal completion). Failed auth gave 1 earlier. Exit codes of the other runs were not captured; assume 0 on a `result` with `is_error:false`.
 - Cost/time seen: a first turn is about 12 s; `--resume` second turn 2 s.
-- Each first turn created about 110k-330k cache tokens (the user's skills, plugins, hooks, and
-  system prompt), `total_cost_usd` ~1-2.6 for a tiny prompt. It is a subscription, but the usage
+- Each first turn created about 110k-330k cache tokens, `total_cost_usd` ~1-2.6 for a tiny prompt. It is a subscription, but the usage
   shows up as 5-hour/7-day window utilisation (see `rate_limit_event`). Keep prompts small.
-- The user's own setup is loaded in `-p`: the `slash_commands`, `skills`, `plugins`, `agents` lists in
-  init come from the user's setup, and in the no-api-key run (which had no `--include-partial-messages`,
-  `--restricted` or `--tools`) SessionStart hooks ran: `system/hook_started` / `hook_response` events,
-  with the superpowers plugin injecting a large `additionalContext`. No hook events appear in the three
-  committed fixtures, so whether hooks ran in the restricted runs is not known from the stream. Recommendation (not tested): add
-  `--strict-mcp-config` (with no `--mcp-config`, so no MCP servers load; the claude.ai connector
-  servers asana/atlassian/... otherwise show up as "need authorization" in the model's reply text: the
-  denied-accept and sigint runs ended with a paragraph about the Atlassian Rovo and Google Calendar
-  connectors) and consider `--setting-sources` (to limit user/project settings and hooks, e.g.
-  `--setting-sources project` or an empty value). Whether these flags suppress the hooks and connector
-  notices must be tested before relying on them. The init `mcp_servers` was `[]` in every run, so
-  the notice appears in the model's text only.
+- `--restricted` keeps the user's setup out of the session. Per `claude --help` it "ignores user,
+  project and local settings files (managed settings and --settings still apply; add
+  --strict-mcp-config to skip MCP servers too)". The files agree: the read-and-edit, denied-*, resume
+  and sigint runs (all with `--restricted`) have no `hook_started`/`hook_response` events, and their
+  init lists only the built-in plugins (`cc-plugin-*@builtin`), only built-in skills, and
+  `mcp_servers: []`. The no-api-key run did NOT pass `--restricted`, and it does show
+  `hook_started`/`hook_response` (the user's SessionStart hook, with the superpowers plugin injecting
+  a large `additionalContext`): that is the contrast.
+- What still reaches a `--restricted` session is the account's claude.ai connectors: the
+  denied-accept reply (and the sigint reply) mention Atlassian Rovo and Google Calendar needing
+  authorization, though init `mcp_servers` is `[]`.
+- Ruling: the app also passes `--strict-mcp-config` (with no `--mcp-config`) to skip MCP servers.
+  Untested here; Task 10 checks it live. No `--setting-sources` flag is needed, `--restricted`
+  already covers settings files.
 
 ## Event types seen
 
@@ -264,10 +264,9 @@ the hook events; it is not committed because the hook output holds personal cont
 
 ## Surprises
 
-- The claude.ai connector and plugin-hook machinery of the user's account loads inside `-p`
-  (hooks ran, connector "needs authorization" notices appear in the model's reply). Worth trying
-  `--strict-mcp-config` and `--setting-sources` (untested) so the panel is deterministic.
-- First turns are costly in cache tokens because of that setup.
+- The account's claude.ai connectors still reach a `--restricted` session ("needs authorization"
+  notices in the model's reply); the app adds `--strict-mcp-config` (untested, Task 10).
+- First turns are costly in cache tokens (about 110k-330k) even with a tiny prompt.
 - A failed edit does not end the run: the model sees the error, and the result is still
   `is_error:false`. The panel must show denials from `permission_denied` events or
   `result.permission_denials` (the `.quest` denial has no `permission_denied` event, only a
