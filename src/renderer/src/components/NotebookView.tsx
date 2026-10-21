@@ -107,6 +107,7 @@ export function NotebookView() {
           </button>
           <button
             className="quiet danger"
+            disabled={locked}
             onClick={() => {
               const { notebooks } = useStore.getState();
               if (window.confirm(deletePageQuestion(displayTitle(nb.title), descendantIds(notebooks, nb.id).length))) deletePage(nb.id);
