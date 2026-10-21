@@ -2,8 +2,8 @@ import type { FileBlock, FileCandle, FileChart, FileLook, FilePoint, PageFile } 
 import { formatJson } from '@shared/formatJson';
 import type { CallCell, ChartCell, DrawingCell, Interval, ItemData, MarkLook, Notebook, PlanCell } from '../types';
 import { BACKGROUNDS, INK_COLORS, NEW_HEIGHT, PEN_TOOLS, SIZES, drawingFileName, type Stroke } from '../drawing/model';
-import { decodePoints } from '../drawing/strokes';
-import { drawingFromSvg, drawingToSvg } from '../drawing/svg';
+import { decodePoints, encodedPoints } from '../drawing/strokes';
+import { drawingFromSvg } from '../drawing/svg';
 import { SIDECAR_NAME } from '@shared/ipc';
 import type { NotebookLinkInline, PageBlock } from '../page/blockTypes';
 import type { Bar } from '../lib/market';
@@ -265,36 +265,50 @@ function inlineDrawing(raw: Raw, id: string): DrawingCell {
   return { id, type: 'drawing', height: height !== null && height > 0 ? height : NEW_HEIGHT, background: oneOf(raw.background, BACKGROUNDS) ?? 'blank', strokes };
 }
 
-/** What reading a page's drawings needs: their files' text, and where to note the drawings that need writing. */
+/** What reading a page's drawings needs: their files' text, and where to note what needs writing. */
 interface DrawingContext {
   files: Record<string, string>;
+  /** Drawings to write to their files: strokes moving out of the page, or a drawing copied to its own name. */
   toWrite: Set<string>;
-  movedOut: boolean;
+  /** The page file needs writing again too: a drawing got a new id or file name, or strokes moved out. */
+  repaired: boolean;
+  /** Drawing ids on this page so far, ignoring case, as a case-insensitive disk does. */
+  usedIds: Set<string>;
 }
 
+/** A drawing id that is safe as part of a file name. */
+const DRAWING_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
 /**
- * A drawing read from its file in the page's folder. A file written by hand, or missing, or strokes still
- * inside the page, are read as well as can be, and the drawing is noted for writing in the app's own form.
+ * A drawing read from its file in the page's folder. Nothing is ever written over a file just for reading it:
+ * a missing file stays missing (it may be on its way), and a file written by hand is shown as it is. Files are
+ * written only when strokes move out of the page, or when a drawing is copied to the file its id names.
  */
-function drawingFromFile(raw: Raw, id: string, ctx: DrawingContext): DrawingCell {
-  // Strokes still inside the page are the drawing, whatever picture sits beside it: the earlier build wrote
-  // pictures without their strokes.
-  if (Array.isArray(raw.strokes)) {
-    ctx.movedOut = true;
+function drawingFromFile(raw: Raw, rawId: string, id: string, ctx: DrawingContext): DrawingCell {
+  const own = drawingFileName(id);
+  const named = typeof raw.file === 'string' && SIDECAR_NAME.test(raw.file) ? raw.file : DRAWING_ID.test(rawId) ? drawingFileName(rawId) : own;
+  if (raw.file !== own) ctx.repaired = true;
+  const text = ctx.files[named];
+  const fromFile = text === undefined ? null : drawingFromSvg(text);
+  const inline = Array.isArray(raw.strokes) ? inlineDrawing(raw, id) : null;
+  if (inline) ctx.repaired = true;
+
+  // The file's strokes are the drawing. Strokes in the page join them, and never replace them.
+  if (fromFile && fromFile.strokes.length > 0) {
+    const have = new Set(fromFile.strokes.map(encodedPoints));
+    const added = inline ? inline.strokes.filter((stroke) => !have.has(encodedPoints(stroke))) : [];
+    if (added.length || named !== own) ctx.toWrite.add(id);
+    return { id, type: 'drawing', ...fromFile, strokes: [...fromFile.strokes, ...added] };
+  }
+  // Strokes still inside the page, as the earlier build kept them, beside a file with no stroke data or none.
+  if (inline) {
     ctx.toWrite.add(id);
-    return inlineDrawing(raw, id);
+    return inline;
   }
-  const named = typeof raw.file === 'string' && SIDECAR_NAME.test(raw.file) ? raw.file : drawingFileName(id);
-  const text = ctx.files[named] ?? ctx.files[drawingFileName(id)];
-  const read = text === undefined ? null : drawingFromSvg(text);
-  if (read) {
-    const drawing: DrawingCell = { id, type: 'drawing', ...read };
-    // A picture with shapes but no stroke data isn't one the app can redraw, so it's never written over by itself.
-    const foreign = read.strokes.length === 0 && /<path\b/i.test(text!);
-    if (!foreign && (drawingToSvg(drawing) !== text || named !== drawingFileName(id))) ctx.toWrite.add(id);
-    return drawing;
+  if (fromFile) {
+    if (named !== own) ctx.toWrite.add(id);
+    return { id, type: 'drawing', ...fromFile };
   }
-  ctx.toWrite.add(id);
   return { id, type: 'drawing', height: NEW_HEIGHT, background: 'blank', strokes: [] };
 }
 
@@ -341,8 +355,15 @@ function blocksFromFile(rawBlocks: unknown, items: Record<string, ItemData>, ctx
         return itemBlock('tradePlan', planFromFile);
       case 'prediction':
         return itemBlock('prediction', callFromFile);
-      case 'drawing':
-        return itemBlock('drawing', (r, id) => drawingFromFile(r, id, ctx));
+      case 'drawing': {
+        // A drawing's id names its file, so it must be safe as a file name, and its own on the page.
+        const rawId = typeof raw.id === 'string' ? raw.id : '';
+        const id = DRAWING_ID.test(rawId) && !ctx.usedIds.has(rawId.toLowerCase()) && !items[rawId] ? rawId : uid();
+        if (id !== rawId) ctx.repaired = true;
+        ctx.usedIds.add(id.toLowerCase());
+        items[id] = drawingFromFile(raw, rawId, id, ctx);
+        return { id, type: 'drawing', props: { itemId: id }, children };
+      }
       default:
         // Nothing is lost: a block the app doesn't know is shown, and saved, as its own JSON.
         return { id: uid(), type: 'codeBlock', props: { language: 'json' }, content: textContent(formatJson(raw).trim()), children };
@@ -374,9 +395,9 @@ export function fileToPage(
   };
 
   const items: Record<string, ItemData> = {};
-  const ctx: DrawingContext = { files: drawingFiles, toWrite: new Set(), movedOut: false };
+  const ctx: DrawingContext = { files: drawingFiles, toWrite: new Set(), repaired: false, usedIds: new Set() };
   const blocks = blocksFromFile(raw.blocks, items, ctx);
-  if (ctx.movedOut) repaired = true;
+  if (ctx.repaired) repaired = true;
   const journalDate = typeof raw.journalDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw.journalDate) ? raw.journalDate : undefined;
   const notebook: Notebook = {
     id: meta.id,

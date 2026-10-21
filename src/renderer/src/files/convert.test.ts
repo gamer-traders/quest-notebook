@@ -176,18 +176,66 @@ test('a drawing is read from its file beside the page', () => {
   expect([...drawingsToWrite]).toEqual([]);
 });
 
-test('a drawing file written by hand is read, and marked to be written again in the app’s form', () => {
-  const file = { blocks: [{ type: 'drawing', id: 'd1', file: 'drawing-d1.svg' }] };
+/** A page with every field, so `repaired` only says what the drawings needed. */
+const whole = (blocks: unknown[]) => ({ id: 'n1', title: 'P', position: 0, created: '2026-10-20T00:00:00Z', updated: '2026-10-20T00:00:00Z', blocks });
+
+test('a drawing file written by hand is read, and left as it is until someone draws', () => {
+  const file = whole([{ type: 'drawing', id: 'd1', file: 'drawing-d1.svg' }]);
   const handmade = `<svg viewBox="0 0 1000 300"><path data-points="10,10 20,20,0.9" data-tool="marker" data-color="red"/></svg>`;
-  const { notebook, drawingsToWrite } = fileToPage(file, nm(), { 'drawing-d1.svg': handmade });
+  const { notebook, drawingsToWrite, repaired } = fileToPage(file, nm(), { 'drawing-d1.svg': handmade });
   expect(notebook.items.d1).toMatchObject({ type: 'drawing', height: 300, strokes: [{ tool: 'marker', color: 'red' }] });
-  expect([...drawingsToWrite]).toEqual(['d1']);
+  expect([...drawingsToWrite]).toEqual([]);
+  expect(repaired).toBe(false);
 });
 
-test('a drawing whose file is missing starts empty, and gets a file', () => {
-  const { notebook, drawingsToWrite } = fileToPage({ blocks: [{ type: 'drawing', id: 'd1', file: 'drawing-d1.svg' }] }, nm(), {});
+test('a drawing whose file is missing starts empty, and no empty file is ever written for it', () => {
+  // Its file may be on its way: a page renamed outside, or an AI writing the page before the drawing.
+  const { notebook, drawingsToWrite } = fileToPage(whole([{ type: 'drawing', id: 'd1', file: 'drawing-d1.svg' }]), nm(), {});
   expect(notebook.items.d1).toMatchObject({ type: 'drawing', height: 400, background: 'blank', strokes: [] });
-  expect([...drawingsToWrite]).toEqual(['d1']);
+  expect([...drawingsToWrite]).toEqual([]);
+});
+
+test('a drawing whose file has another name is copied to its own name, and the page then points at it', () => {
+  const sketch = drawingToSvg(drawingItem);
+  const { notebook, drawingsToWrite, repaired } = fileToPage(whole([{ type: 'drawing', id: 'abc', file: 'drawing-sketch.svg' }]), nm(), { 'drawing-sketch.svg': sketch });
+  expect((notebook.items.abc as DrawingCell).strokes).toHaveLength(1);
+  expect([...drawingsToWrite]).toEqual(['abc']);
+  expect(repaired).toBe(true);
+  expect(pageToFile(notebook, writeTarget).blocks).toEqual([{ type: 'drawing', id: 'abc', file: 'drawing-abc.svg' }]);
+});
+
+test('a drawing id that can’t be a file name gets a new one, keeping its strokes', () => {
+  const { notebook, drawingsToWrite, repaired } = fileToPage(whole([{ type: 'drawing', id: 'my drawing', file: 'drawing-x.svg' }]), nm(), { 'drawing-x.svg': drawingToSvg(drawingItem) });
+  const [id] = Object.keys(notebook.items);
+  expect(id).toMatch(/^[A-Za-z0-9_-]{1,64}$/);
+  expect((notebook.items[id] as DrawingCell).strokes).toHaveLength(1);
+  expect([...drawingsToWrite]).toEqual([id]);
+  expect(repaired).toBe(true);
+});
+
+test('a copied drawing block gets an id of its own, even one differing only in case, and a copy of the drawing', () => {
+  const files = { 'drawing-abc.svg': drawingToSvg(drawingItem) };
+  const raw = whole([{ type: 'drawing', id: 'abc', file: 'drawing-abc.svg' }, { type: 'drawing', id: 'ABC', file: 'drawing-abc.svg' }]);
+  const { notebook, drawingsToWrite, repaired } = fileToPage(raw, nm(), files);
+  const ids = notebook.blocks.map((b) => b.id);
+  expect(ids[0]).toBe('abc');
+  expect(ids[1]).not.toBe('ABC');
+  expect((notebook.items[ids[1]] as DrawingCell).strokes).toHaveLength(1);
+  expect([...drawingsToWrite]).toEqual([ids[1]]);
+  expect(repaired).toBe(true);
+});
+
+test('strokes added inside the page join the drawing in its file, and never replace it', () => {
+  const file = drawingToSvg({ ...drawingItem, strokes: [0, 1, 2].map((i) => ({ ...drawingItem.strokes[0], id: `s${i}`, points: [i, i, 0.5, i + 5, i + 5, 0.5] })) });
+  const added = whole([{ type: 'drawing', id: 'd1', file: 'drawing-d1.svg', strokes: [{ tool: 'pen', points: '1,1,0.5 6,6,0.5' }, { tool: 'pen', points: '50,50,0.5 60,60,0.5' }] }]);
+  const merged = fileToPage(added, nm(), { 'drawing-d1.svg': file });
+  expect((merged.notebook.items.d1 as DrawingCell).strokes).toHaveLength(4);
+  expect([...merged.drawingsToWrite]).toEqual(['d1']);
+  expect(merged.repaired).toBe(true);
+  const emptied = fileToPage(whole([{ type: 'drawing', id: 'd1', file: 'drawing-d1.svg', strokes: [] }]), nm(), { 'drawing-d1.svg': file });
+  expect((emptied.notebook.items.d1 as DrawingCell).strokes).toHaveLength(3);
+  expect([...emptied.drawingsToWrite]).toEqual([]);
+  expect(emptied.repaired).toBe(true);
 });
 
 test('a drawing saved with its strokes inside the page, as before, is read and moved to its own file', () => {
