@@ -37,6 +37,7 @@ const workspaces = new Workspaces(join(app.getPath('userData'), 'workspaces.json
   lost: (message) => send('workspace:lost', message),
   opened: (name) => getWindow()?.setTitle(name ? `${name} — ${PRODUCT}` : PRODUCT),
   trash: (abs) => shell.trashItem(abs),
+  claudeEvent: (e) => send('claude:event', e),
   confirmAdopt: async (root) => {
     const options = {
       type: 'question' as const,
@@ -87,6 +88,8 @@ function createWindow(): BrowserWindow {
   let saved = false;
   created.on('close', (e) => {
     if (saved) return;
+    // macOS keeps the app running without a window: a turn mustn't go on unseen.
+    workspaces.stopClaude();
     e.preventDefault();
     void flushWindow().finally(() => {
       saved = true;

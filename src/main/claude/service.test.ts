@@ -1,0 +1,563 @@
+import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { delimiter, join } from 'node:path';
+import { afterEach, describe, expect, test } from 'vitest';
+import type { ChatAction, ChatMessage, ClaudeEvent, SendRequest } from '@shared/ipc';
+import { WorkspaceSession } from '../workspace/session';
+import { CHATS_DIR, readChat, writeChat } from './chats';
+import { buildPrompt } from './command';
+import { ClaudeService, parseSendRequest, parseUndoArgs } from './service';
+
+const FIXTURES = join(__dirname, '__fixtures__');
+const FAKE = join(FIXTURES, 'fake-claude.mjs');
+const SESSION_ID = 'e607f87c-c213-4764-b30b-b92b8927eec4';
+// Laid out unusually on purpose: undo must give back these exact bytes, not a reformatted page.
+const A_TEXT = '{\n  "id": "a",  "title": "A",\n  "position": 0,\n  "blocks": [{ "type": "paragraph", "text": "one" }]\n}\n';
+const B_TEXT = '{"id":"b","title":"Bee","position":1,"blocks":[]}\n';
+// What fake-claude.mjs writes.
+const A_AFTER = `${JSON.stringify({ ...JSON.parse(A_TEXT), blocks: [...JSON.parse(A_TEXT).blocks, { type: 'paragraph', text: 'Hello from Claude.' }] }, null, 2)}\n`;
+const DRAWING = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path d="M1 1 L9 9"/></svg>\n';
+const P_TEXT = `${JSON.stringify({ id: 'np000001', title: 'P', position: 0, blocks: [] }, null, 2)}\n`;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const exists = (abs: string) => stat(abs).then(() => true, () => false);
+const running = (child: ChildProcess) => child.exitCode === null && child.signalCode === null;
+
+function resultText(name: string): string {
+  const lines = readFileSync(join(FIXTURES, name), 'utf8').split('\n').filter(Boolean);
+  return JSON.parse(lines[lines.length - 1]).result;
+}
+
+const cleanups: (() => Promise<void> | void)[] = [];
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+});
+
+/** Sets environment variables for this test only. */
+function withEnv(vars: Record<string, string | undefined>): void {
+  const saved = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
+  const apply = (v: Record<string, string | undefined>) => {
+    for (const [k, value] of Object.entries(v)) {
+      if (value === undefined) delete process.env[k];
+      else process.env[k] = value;
+    }
+  };
+  apply(vars);
+  cleanups.push(() => apply(saved));
+}
+
+async function waitFor<T>(what: string, check: () => T | undefined | null | false | Promise<T | undefined | null | false>, timeoutMs = 10_000): Promise<T> {
+  const start = Date.now();
+  for (;;) {
+    const value = await check();
+    if (value) return value;
+    if (Date.now() - start > timeoutMs) throw new Error(`Timed out waiting for ${what}`);
+    await sleep(10);
+  }
+}
+
+async function exited(child: ChildProcess): Promise<void> {
+  if (!running(child)) return;
+  await new Promise((resolve) => child.once('exit', resolve));
+}
+
+interface Setup {
+  root: string;
+  log: string;
+  session: WorkspaceSession;
+  service: ClaudeService;
+  events: ClaudeEvent[];
+  children: ChildProcess[];
+}
+
+/** A real session on a temp workspace (reached through a symlink, as macOS temp folders are), and the fake CLI. */
+async function setup(over: { locate?: () => Promise<string | null>; spawn?: typeof spawn } = {}): Promise<Setup> {
+  const parent = await mkdtemp(join(tmpdir(), 'quest-claude-'));
+  const real = join(parent, 'real');
+  await mkdir(join(real, 'Markets'), { recursive: true });
+  await writeFile(join(real, 'Markets/A.json'), A_TEXT);
+  await writeFile(join(real, 'Markets/B.json'), B_TEXT);
+  await writeFile(join(real, 'README.md'), 'readme\n');
+  const root = join(parent, 'ws');
+  await symlink(real, root);
+  const log = join(parent, 'fake-log.json');
+  withEnv({ FAKE_LOG: log, FAKE_LOGGED_OUT: undefined, FAKE_AUTH_BROKEN: undefined });
+
+  const events: ClaudeEvent[] = [];
+  const children: ChildProcess[] = [];
+  let service: ClaudeService | undefined;
+  const trash = (abs: string) => rm(abs, { recursive: true });
+  const session = await WorkspaceSession.open(root, false, { change: () => {}, lost: () => {}, fileChanges: (c) => service?.fileChanges(c) }, trash, 60_000);
+  const spawnFake = ((command: string, args: readonly string[], options: SpawnOptions) => {
+    const child = spawn(process.execPath, [command, ...args], options);
+    children.push(child);
+    return child;
+  }) as unknown as typeof spawn;
+  service = new ClaudeService(root, session, {
+    locate: over.locate ?? (async () => FAKE),
+    spawn: over.spawn ?? spawnFake,
+    trash,
+    send: (e) => events.push(e),
+    stopGraceMs: 200,
+  });
+  const made = service;
+  cleanups.push(async () => {
+    made.close();
+    session.close();
+    for (const child of children) {
+      if (running(child)) child.kill('SIGKILL');
+      await exited(child);
+    }
+    await rm(parent, { recursive: true, force: true });
+  });
+  return { root, log, session, service, events, children };
+}
+
+const request = (message: string, over: Partial<SendRequest> = {}): SendRequest => ({ chatId: null, message, references: [], openPageId: null, ...over });
+
+async function sendOk(s: Setup, message: string, over: Partial<SendRequest> = {}): Promise<{ chatId: string; messageId: string }> {
+  await rm(s.log, { force: true });
+  const result = await s.service.send(request(message, over));
+  if ('error' in result) throw new Error(result.error);
+  return result;
+}
+
+const doneOf = (s: Setup, messageId: string): Promise<ChatMessage> =>
+  waitFor('the done event', () => {
+    const done = s.events.find((e) => e.kind === 'done' && e.messageId === messageId);
+    return done?.kind === 'done' ? done.message : undefined;
+  });
+
+/** The fake has written its log, so its signal handlers are in place. */
+const fakeReady = (s: Setup) => waitFor('the fake to start', () => exists(s.log));
+const fakeLog = async (s: Setup): Promise<{ argv: string[]; envKeys: string[]; path: string }> => JSON.parse(await readFile(s.log, 'utf8'));
+
+const withoutId = ({ id: _id, ...rest }: ChatAction) => rest;
+const actionEvents = (s: Setup, messageId: string) => s.events.flatMap((e) => (e.kind === 'action' && e.messageId === messageId ? [e.action] : []));
+
+describe('a turn', () => {
+  test('streams text and actions, then done', async () => {
+    const s = await setup();
+    const { chatId, messageId } = await sendOk(s, 'Add a paragraph');
+    const message = await doneOf(s, messageId);
+
+    expect(s.events.every((e) => e.chatId === chatId && e.messageId === messageId)).toBe(true);
+    expect(s.events[s.events.length - 1].kind).toBe('done');
+    const text = s.events.flatMap((e) => (e.kind === 'text' ? [e.text] : [])).join('');
+    expect(text).toBe(resultText('read-and-edit.jsonl'));
+    const expected = [
+      { verb: 'read', path: 'Markets/A.json' },
+      { verb: 'edited', path: 'Markets/A.json' },
+      { verb: 'created', path: 'Markets/A/drawing-x1.svg' },
+    ];
+    expect(actionEvents(s, messageId).map(withoutId)).toEqual(expected);
+    expect(message).toMatchObject({ id: messageId, role: 'assistant', text: resultText('read-and-edit.jsonl') });
+    expect(message.actions?.map(withoutId)).toEqual(expected);
+    expect(message.error).toBeUndefined();
+  });
+
+  test('the reply lists what changed, with the exact text before and after', async () => {
+    const s = await setup();
+    const { messageId } = await sendOk(s, 'Add a paragraph');
+    const message = await doneOf(s, messageId);
+    expect(message.changes).toEqual([
+      { path: 'Markets/A.json', pageId: 'a', kind: 'edited', drawing: false, before: A_TEXT, after: A_AFTER },
+      { path: 'Markets/A/drawing-x1.svg', pageId: 'a', kind: 'created', drawing: true, before: null, after: DRAWING },
+    ]);
+    expect(await readFile(join(s.root, 'Markets/A.json'), 'utf8')).toBe(A_AFTER);
+  });
+
+  test('the chat file keeps both messages, the references and the session id', async () => {
+    const s = await setup();
+    const references = [
+      { kind: 'page' as const, pageId: 'b', title: 'Bee' },
+      { kind: 'selection' as const, pageId: 'a', title: 'A', text: 'one\ntwo' },
+      { kind: 'page' as const, pageId: 'gone', title: 'Gone' },
+    ];
+    const { chatId, messageId } = await sendOk(s, 'Tidy this page', { openPageId: 'a', references });
+    const message = await doneOf(s, messageId);
+
+    const chat = await readChat(s.root, chatId);
+    expect(chat).toMatchObject({ id: chatId, title: 'Tidy this page', sessionId: SESSION_ID });
+    expect(chat?.messages).toHaveLength(2);
+    expect(chat?.messages[0]).toMatchObject({
+      role: 'user',
+      text: 'Tidy this page',
+      references: [{ kind: 'page', pageId: 'a', title: 'A' }, references[0], references[1]],
+    });
+    expect(typeof chat?.messages[0].id).toBe('string');
+    expect(chat?.messages[1]).toEqual(message);
+
+    const { argv } = await fakeLog(s);
+    expect(argv[argv.length - 1]).toBe(
+      buildPrompt({
+        message: 'Tidy this page',
+        openPage: { title: 'A', path: 'Markets/A.json' },
+        references: [{ title: 'Bee', path: 'Markets/B.json' }],
+        selection: { title: 'A', text: 'one\ntwo' },
+      }),
+    );
+  });
+
+  test('a second send while a turn runs is refused', async () => {
+    const s = await setup();
+    const { messageId } = await sendOk(s, 'sleep');
+    expect(await s.service.send(request('Another'))).toEqual({ error: 'Claude is still answering' });
+    await fakeReady(s);
+    await s.service.stop();
+    await doneOf(s, messageId);
+    expect(s.children).toHaveLength(1);
+  });
+
+  test('the next turn in a chat resumes its session', async () => {
+    const s = await setup();
+    const first = await sendOk(s, 'Add a paragraph');
+    await doneOf(s, first.messageId);
+    expect((await fakeLog(s)).argv).not.toContain('--resume');
+
+    const second = await sendOk(s, 'And another', { chatId: first.chatId });
+    expect(second.chatId).toBe(first.chatId);
+    await doneOf(s, second.messageId);
+    const { argv } = await fakeLog(s);
+    expect(argv.slice(argv.indexOf('--resume'), argv.indexOf('--resume') + 2)).toEqual(['--resume', SESSION_ID]);
+    const chat = await readChat(s.root, first.chatId);
+    expect(chat?.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant']);
+    expect(chat?.sessionId).toBe(SESSION_ID);
+  });
+
+  test('a chat that is gone gives an error', async () => {
+    const s = await setup();
+    expect(await s.service.send(request('Hi', { chatId: 'zzzzzzzz' }))).toEqual({ error: 'That chat is gone' });
+    expect(s.children).toHaveLength(0);
+  });
+
+  test('the child gets no API key or host variables, and finds node next to claude', async () => {
+    const s = await setup();
+    withEnv({ ANTHROPIC_API_KEY: 'sk-test', ANTHROPIC_AUTH_TOKEN: 'tok', ANTHROPIC_BASE_URL: 'http://proxy', CLAUDE_CODE_SIMPLE: '1', CLAUDECODE: '1', CLAUDE_CONFIG_DIR: '/cfg' });
+    const { messageId } = await sendOk(s, 'Add a paragraph');
+    await doneOf(s, messageId);
+    const { envKeys, path, argv } = await fakeLog(s);
+    for (const key of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'CLAUDE_CODE_SIMPLE', 'CLAUDECODE']) expect(envKeys).not.toContain(key);
+    expect(envKeys).toContain('CLAUDE_CONFIG_DIR');
+    expect(path.startsWith(`${FIXTURES}${delimiter}`)).toBe(true);
+    expect(argv[0]).toBe('-p');
+    expect(argv).not.toContain('acceptEdits');
+  });
+});
+
+describe('stopping', () => {
+  test('stop ends a sleeping turn, and the reply says "Stopped"', async () => {
+    const s = await setup();
+    const { chatId, messageId } = await sendOk(s, 'sleep');
+    await fakeReady(s);
+    await s.service.stop();
+    const message = await doneOf(s, messageId);
+    expect(message.error).toBe('Stopped');
+    expect(s.children[0].exitCode).toBe(130);
+    expect((await readChat(s.root, chatId))?.sessionId).toBe(SESSION_ID);
+    // The service is free again.
+    const next = await sendOk(s, 'Add a paragraph', { chatId });
+    await doneOf(s, next.messageId);
+  });
+
+  test('a turn that ignores SIGINT is ended by SIGTERM after the grace period', async () => {
+    const s = await setup();
+    const { messageId } = await sendOk(s, 'stubborn sleep');
+    await fakeReady(s);
+    const started = Date.now();
+    await s.service.stop();
+    const message = await doneOf(s, messageId);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(180);
+    expect(s.children[0].signalCode).toBe('SIGTERM');
+    expect(message.error).toBe('Stopped');
+  });
+
+  test('a stop that comes while the turn is still starting stops it once it runs', async () => {
+    const s = await setup();
+    const sending = s.service.send(request('sleep'));
+    await s.service.stop();
+    const result = await sending;
+    if ('error' in result) throw new Error(result.error);
+    expect((await doneOf(s, result.messageId)).error).toBe('Stopped');
+    expect(s.children).toHaveLength(1);
+    expect(running(s.children[0])).toBe(false);
+  });
+
+  test('a close that comes while the turn is still starting starts nothing', async () => {
+    const s = await setup();
+    const sending = s.service.send(request('sleep'));
+    s.service.close();
+    expect(await sending).toHaveProperty('error');
+    await sleep(100);
+    expect(s.children).toHaveLength(0);
+    expect(s.events).toEqual([]);
+  });
+
+  test('close mid-turn kills the child, and nothing more is written or sent (Review Focus 2)', async () => {
+    const s = await setup();
+    const { chatId, messageId } = await sendOk(s, 'noisy sleep');
+    await fakeReady(s);
+    const chatFile = join(s.root, CHATS_DIR, `${chatId}.json`);
+    const before = await readFile(chatFile, 'utf8');
+    const sent = s.events.length;
+
+    s.service.close();
+    await exited(s.children[0]);
+    // The noisy fake printed a last reply as it went: it must be ignored.
+    expect(s.children[0].exitCode).toBe(143);
+    await sleep(300);
+
+    expect(await readFile(chatFile, 'utf8')).toBe(before);
+    expect(s.events.slice(sent)).toEqual([]);
+    expect(s.events.some((e) => e.kind === 'done' && e.messageId === messageId)).toBe(false);
+    expect(await s.service.send(request('Again', { chatId }))).toHaveProperty('error');
+    await expect(s.service.undo(chatId, messageId, null, false)).rejects.toThrow();
+    expect(s.children).toHaveLength(1);
+  });
+});
+
+describe('status', () => {
+  test('missing when claude is not found, and send says so', async () => {
+    const s = await setup({ locate: async () => null });
+    expect(await s.service.status()).toEqual({ state: 'missing' });
+    const result = await s.service.send(request('Hi'));
+    expect(result).toHaveProperty('error');
+    expect(s.children).toHaveLength(0);
+  });
+
+  test('ready, with the version', async () => {
+    const s = await setup();
+    expect(await s.service.status()).toEqual({ state: 'ready', path: FAKE, version: '2.1.288 (Claude Code)' });
+  });
+
+  test('logged-out when auth status says so', async () => {
+    const s = await setup();
+    withEnv({ FAKE_LOGGED_OUT: '1' });
+    expect(await s.service.status()).toMatchObject({ state: 'logged-out' });
+  });
+
+  test('an error when claude cannot be run', async () => {
+    const s = await setup({ locate: async () => join(FIXTURES, 'no-such-claude'), spawn });
+    const status = await s.service.status();
+    expect(status.state).toBe('error');
+    expect(status.message).toBeTruthy();
+  });
+
+  test('a failed login ends the turn with its error, and status follows auth status', async () => {
+    const s = await setup();
+    const { messageId } = await sendOk(s, 'fail auth');
+    const message = await doneOf(s, messageId);
+    expect(message.error).toBe('Failed to authenticate: OAuth session expired and could not be refreshed');
+
+    // auth status can't be read: the last turn's logged-out stands.
+    withEnv({ FAKE_AUTH_BROKEN: '1' });
+    expect(await s.service.status()).toMatchObject({ state: 'logged-out' });
+    // auth status says logged in: that clears it.
+    withEnv({ FAKE_AUTH_BROKEN: undefined });
+    expect(await s.service.status()).toMatchObject({ state: 'ready' });
+    withEnv({ FAKE_AUTH_BROKEN: '1' });
+    expect(await s.service.status()).toMatchObject({ state: 'ready' });
+    withEnv({ FAKE_AUTH_BROKEN: undefined, FAKE_LOGGED_OUT: '1' });
+    expect(await s.service.status()).toMatchObject({ state: 'logged-out' });
+  });
+});
+
+describe('refusals and new spaces', () => {
+  test('refused actions arrive again marked refused, and the reply marks every denial', async () => {
+    const s = await setup();
+    const { messageId } = await sendOk(s, 'Try to refuse these');
+    const message = await doneOf(s, messageId);
+
+    const live = ['toolu_01LoCENCcmhoC9RHHsBMyq27', 'toolu_012tiZcqnGrt5DutPowRKo4Y', 'toolu_011PvP1pN99ZvfmCCt8oGDqS'];
+    const sent = actionEvents(s, messageId);
+    expect(sent.filter((a) => a.refused).map((a) => a.id)).toEqual(live);
+    for (const id of live) expect(sent.find((a) => a.id === id && !a.refused)).toBeTruthy();
+
+    const denied = [...live, 'toolu_01PJkQHSxryFKttNhGwmoV9t'];
+    expect(message.actions?.filter((a) => a.refused).map((a) => a.id).sort()).toEqual([...denied].sort());
+    expect(message.actions?.find((a) => a.id === 'toolu_01PJkQHSxryFKttNhGwmoV9t')).toMatchObject({ verb: 'edited', path: '.quest/workspace.json', refused: true });
+    expect(message.error).toBeUndefined();
+    expect(message.changes).toBeUndefined();
+  });
+
+  test('a page in a space the turn made is flagged, and undoing it removes the space', async () => {
+    const s = await setup();
+    const { chatId, messageId } = await sendOk(s, 'make a new space');
+    const message = await doneOf(s, messageId);
+    expect(message.changes).toEqual([{ path: 'NewSpace/P.json', pageId: 'np000001', kind: 'created', drawing: false, newSpace: true, before: null, after: P_TEXT }]);
+
+    expect(await s.service.undo(chatId, messageId, null, false)).toEqual({ undone: ['NewSpace/P.json'], conflicts: [] });
+    expect(await exists(join(s.root, 'NewSpace'))).toBe(false);
+    expect(await exists(join(s.root, 'Markets/A.json'))).toBe(true);
+  });
+});
+
+describe('undo', () => {
+  test('restores the page byte for byte, and records what was undone', async () => {
+    const s = await setup();
+    const { chatId, messageId } = await sendOk(s, 'Add a paragraph');
+    await doneOf(s, messageId);
+
+    expect(await s.service.undo(chatId, messageId, ['Markets/A.json'], false)).toEqual({ undone: ['Markets/A.json'], conflicts: [] });
+    expect(await readFile(join(s.root, 'Markets/A.json'), 'utf8')).toBe(A_TEXT);
+    expect(await exists(join(s.root, 'Markets/A/drawing-x1.svg'))).toBe(true);
+    expect((await readChat(s.root, chatId))?.messages[1].undone).toEqual(['Markets/A.json']);
+
+    // Undo all: only what is left.
+    expect(await s.service.undo(chatId, messageId, null, false)).toEqual({ undone: ['Markets/A/drawing-x1.svg'], conflicts: [] });
+    expect(await exists(join(s.root, 'Markets/A'))).toBe(false);
+    expect((await readChat(s.root, chatId))?.messages[1].undone).toEqual(['Markets/A.json', 'Markets/A/drawing-x1.svg']);
+    expect(await s.service.undo(chatId, messageId, null, false)).toEqual({ undone: [], conflicts: [] });
+  });
+
+  test('a page changed since the reply is a conflict unless forced', async () => {
+    const s = await setup();
+    const { chatId, messageId } = await sendOk(s, 'Add a paragraph');
+    await doneOf(s, messageId);
+    await writeFile(join(s.root, 'Markets/A.json'), 'edited since');
+    expect(await s.service.undo(chatId, messageId, ['Markets/A.json'], false)).toEqual({ undone: [], conflicts: ['Markets/A.json'] });
+    expect(await s.service.undo(chatId, messageId, ['Markets/A.json'], true)).toEqual({ undone: ['Markets/A.json'], conflicts: [] });
+    expect(await readFile(join(s.root, 'Markets/A.json'), 'utf8')).toBe(A_TEXT);
+  });
+
+  test('is refused while a turn runs', async () => {
+    const s = await setup();
+    const first = await sendOk(s, 'Add a paragraph');
+    await doneOf(s, first.messageId);
+    const second = await sendOk(s, 'sleep', { chatId: first.chatId });
+    await expect(s.service.undo(first.chatId, first.messageId, null, false)).rejects.toThrow(/still answering/);
+    expect(await readFile(join(s.root, 'Markets/A.json'), 'utf8')).toBe(A_AFTER);
+    await fakeReady(s);
+    await s.service.stop();
+    await doneOf(s, second.messageId);
+  });
+
+  test('ignores paths that are not among the reply changes', async () => {
+    const s = await setup();
+    const { chatId, messageId } = await sendOk(s, 'Add a paragraph');
+    await doneOf(s, messageId);
+    expect(await s.service.undo(chatId, messageId, ['README.md', '../x.json', 'Markets/B.json'], true)).toEqual({ undone: [], conflicts: [] });
+    expect(await readFile(join(s.root, 'Markets/A.json'), 'utf8')).toBe(A_AFTER);
+    expect(await readFile(join(s.root, 'README.md'), 'utf8')).toBe('readme\n');
+  });
+
+  test('never touches anything but page and drawing files in a space, whatever the chat file says', async () => {
+    const s = await setup();
+    await mkdir(join(s.root, '.quest'), { recursive: true });
+    await writeFile(join(s.root, '.quest/workspace.json'), 'config');
+    await writeFile(join(s.root, 'Top.json'), 'top');
+    await writeFile(join(s.root, 'Markets/notes.txt'), 'notes');
+    const change = (path: string, after: string) => ({ path, kind: 'edited' as const, drawing: false, before: 'EVIL', after });
+    await writeChat(s.root, {
+      id: 'handmade',
+      title: 'Hand-made',
+      sessionId: null,
+      created: '2026-01-01T00:00:00.000Z',
+      updated: '2026-01-01T00:00:00.000Z',
+      messages: [
+        {
+          id: 'm1',
+          role: 'assistant',
+          text: '',
+          created: '2026-01-01T00:00:00.000Z',
+          changes: [
+            change('.quest/workspace.json', 'config'),
+            change('README.md', 'readme\n'),
+            change('Top.json', 'top'),
+            change('Markets/notes.txt', 'notes'),
+            change('Markets/../README.md', 'readme\n'),
+            change('Markets/.hidden/x.json', 'x'),
+            change('Markets/drawing-x.png', 'x'),
+          ],
+        },
+      ],
+    });
+    expect(await s.service.undo('handmade', 'm1', null, true)).toEqual({ undone: [], conflicts: [] });
+    expect(await readFile(join(s.root, '.quest/workspace.json'), 'utf8')).toBe('config');
+    expect(await readFile(join(s.root, 'README.md'), 'utf8')).toBe('readme\n');
+    expect(await readFile(join(s.root, 'Top.json'), 'utf8')).toBe('top');
+    expect(await readFile(join(s.root, 'Markets/notes.txt'), 'utf8')).toBe('notes');
+    expect(await exists(join(s.root, 'Markets/.hidden'))).toBe(false);
+  });
+
+  test('a message that is not there is an error', async () => {
+    const s = await setup();
+    const { chatId, messageId } = await sendOk(s, 'Add a paragraph');
+    await doneOf(s, messageId);
+    await expect(s.service.undo(chatId, 'nope', null, false)).rejects.toThrow();
+    await expect(s.service.undo('zzzzzzzz', messageId, null, false)).rejects.toThrow();
+  });
+});
+
+describe('chats', () => {
+  test('list, read and delete pass through, and the chat a turn runs in cannot be deleted', async () => {
+    const s = await setup();
+    const first = await sendOk(s, 'Add a paragraph');
+    await doneOf(s, first.messageId);
+    expect((await s.service.listChats()).map((c) => c.id)).toEqual([first.chatId]);
+    expect((await s.service.readChat(first.chatId))?.messages).toHaveLength(2);
+
+    const second = await sendOk(s, 'sleep');
+    await expect(s.service.deleteChat(second.chatId)).rejects.toThrow();
+    await s.service.deleteChat(first.chatId);
+    expect(await s.service.readChat(first.chatId)).toBeNull();
+    await fakeReady(s);
+    await s.service.stop();
+    await doneOf(s, second.messageId);
+    await s.service.deleteChat(second.chatId);
+    expect(await s.service.listChats()).toEqual([]);
+  });
+});
+
+test('a claude that cannot be started ends the turn with an error, and the next send still works', async () => {
+  const s = await setup({ locate: async () => join(FIXTURES, 'no-such-claude'), spawn });
+  const first = await s.service.send(request('Hi'));
+  if ('error' in first) throw new Error(first.error);
+  const message = await doneOf(s, first.messageId);
+  expect(message.error).toMatch(/^Claude stopped unexpectedly/);
+  const second = await s.service.send(request('Again', { chatId: first.chatId }));
+  if ('error' in second) throw new Error(second.error);
+  await doneOf(s, second.messageId);
+  expect((await readChat(s.root, first.chatId))?.messages).toHaveLength(4);
+});
+
+describe('request checks', () => {
+  const good = { chatId: null, message: 'Hi', references: [{ kind: 'page', pageId: 'a', title: 'A' }, { kind: 'selection', pageId: 'a', title: 'A', text: 'x' }], openPageId: 'a' };
+
+  test('a good send request passes, with only the known fields', () => {
+    expect(parseSendRequest(good)).toEqual(good);
+    expect(parseSendRequest({ ...good, chatId: 'abcdefgh', openPageId: null, extra: 1 })).toEqual({ ...good, chatId: 'abcdefgh', openPageId: null });
+    expect(parseSendRequest({ ...good, references: [{ kind: 'page', pageId: 'a', title: 'A', text: 'dropped' }] })?.references).toEqual([{ kind: 'page', pageId: 'a', title: 'A' }]);
+  });
+
+  test('bad send requests are refused', () => {
+    for (const bad of [
+      null,
+      'Hi',
+      { ...good, message: '' },
+      { ...good, message: '   ' },
+      { ...good, message: 'x'.repeat(100_001) },
+      { ...good, message: 5 },
+      { ...good, chatId: 5 },
+      { ...good, openPageId: 5 },
+      { ...good, references: 'a' },
+      { ...good, references: [{ kind: 'page', pageId: 1, title: 'A' }] },
+      { ...good, references: [{ kind: 'selection', pageId: 'a', title: 'A' }] },
+      { ...good, references: [{ kind: 'link', pageId: 'a', title: 'A' }] },
+      { ...good, references: [null] },
+    ]) {
+      expect(parseSendRequest(bad)).toBeNull();
+    }
+    expect(parseSendRequest({ ...good, message: 'x'.repeat(100_000) })).not.toBeNull();
+  });
+
+  test('undo arguments', () => {
+    expect(parseUndoArgs(['c', 'm', null, false])).toEqual({ chatId: 'c', messageId: 'm', paths: null, force: false });
+    expect(parseUndoArgs(['c', 'm', ['a', 'b'], true])).toEqual({ chatId: 'c', messageId: 'm', paths: ['a', 'b'], force: true });
+    for (const bad of [[1, 'm', null, false], ['c', null, null, false], ['c', 'm', 'a', false], ['c', 'm', [1], false], ['c', 'm', null, 'yes'], ['c', 'm', undefined, false]]) {
+      expect(parseUndoArgs(bad)).toBeNull();
+    }
+  });
+});

@@ -1,5 +1,6 @@
 import { dialog, ipcMain, shell, type BrowserWindow } from 'electron';
 import type { FlushBatch, UiState } from '@shared/ipc';
+import { parseSendRequest, parseUndoArgs } from './claude/service';
 import type { Workspaces } from './workspaces';
 
 const isWebLink = (url: unknown): url is string => typeof url === 'string' && /^https?:\/\//i.test(url);
@@ -28,5 +29,27 @@ export function registerIpc(workspaces: Workspaces, getWindow: () => BrowserWind
   ipcMain.handle('workspace:ui', (_e, ui: UiState, root?: string) => workspaces.session?.saveUi(ui, root));
   ipcMain.handle('app:open-external', async (_e, url: unknown) => {
     if (isWebLink(url)) await shell.openExternal(url);
+  });
+
+  // Claude in the open workspace. Every argument from the window is checked here; claude:event goes out from index.ts.
+  ipcMain.handle('claude:status', () => workspaces.claude?.status() ?? { state: 'error', message: 'No workspace is open' });
+  ipcMain.handle('claude:send', (_e, req: unknown) => {
+    const parsed = parseSendRequest(req);
+    if (!parsed) return { error: 'Bad request' };
+    return workspaces.claude?.send(parsed) ?? { error: 'No workspace is open' };
+  });
+  ipcMain.handle('claude:stop', () => workspaces.claude?.stop());
+  ipcMain.handle('claude:list', () => workspaces.claude?.listChats() ?? []);
+  ipcMain.handle('claude:read', (_e, id: unknown) => (typeof id === 'string' ? (workspaces.claude?.readChat(id) ?? null) : null));
+  ipcMain.handle('claude:delete', async (_e, id: unknown) => {
+    if (typeof id !== 'string') throw new Error('Bad request');
+    if (!workspaces.claude) throw new Error('No workspace is open');
+    await workspaces.claude.deleteChat(id);
+  });
+  ipcMain.handle('claude:undo', async (_e, ...args: unknown[]) => {
+    const parsed = parseUndoArgs(args);
+    if (!parsed) throw new Error('Bad request');
+    if (!workspaces.claude) throw new Error('No workspace is open');
+    return workspaces.claude.undo(parsed.chatId, parsed.messageId, parsed.paths, parsed.force);
   });
 }

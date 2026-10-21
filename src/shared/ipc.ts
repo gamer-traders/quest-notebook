@@ -173,7 +173,40 @@ export interface QuestApi {
     onMenu(cb: (cmd: MenuCommand) => void): () => void;
     openExternal(url: string): Promise<void>;
   };
+  /** Claude, run as the claude CLI in the open workspace. One turn at a time. */
+  claude: {
+    /** Looks for the CLI again, and whether it's logged in. */
+    status(): Promise<ClaudeStatus>;
+    /** Starts a turn. `messageId` is the id of the reply the events will carry. */
+    send(req: SendRequest): Promise<{ chatId: string; messageId: string } | { error: string }>;
+    /** Stops the running turn. It still ends with a `done` event. */
+    stop(): Promise<void>;
+    onEvent(cb: (e: ClaudeEvent) => void): () => void;
+    listChats(): Promise<ChatSummary[]>;
+    readChat(id: string): Promise<Chat | null>;
+    deleteChat(id: string): Promise<void>;
+    /** Puts back what a reply changed: the given paths, or all of them for null. `force` overwrites files changed since. */
+    undo(chatId: string, messageId: string, paths: string[] | null, force: boolean): Promise<UndoResult>;
+  };
 }
+
+/** A message for Claude. `chatId` null starts a new chat. `openPageId` is the page open in the window, if any. */
+export interface SendRequest {
+  chatId: string | null;
+  message: string;
+  references: ChatReference[];
+  openPageId: string | null;
+}
+
+/**
+ * What a running turn reports. An `action` with an id already sent replaces that action (a refusal arrives this way,
+ * as the same action with `refused: true`). `done` carries the finished reply.
+ */
+export type ClaudeEvent = { chatId: string; messageId: string } & (
+  | { kind: 'text'; text: string }
+  | { kind: 'action'; action: ChatAction }
+  | { kind: 'done'; message: ChatMessage }
+);
 
 /** A page or drawing file that changed on disk, as Claude's turn left it. `before` is null for a file that is new. */
 export interface FileChange {

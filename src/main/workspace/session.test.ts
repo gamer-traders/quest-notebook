@@ -49,8 +49,9 @@ test('a save planned before an outside change to that page is refused as stale, 
     const markets = session.snapshot.spaces.find((s) => s.name === 'Markets')!;
     const lessons = session.snapshot.spaces.find((s) => s.name === 'Lessons')!;
     await rename(join(root, 'Markets/A.json'), join(root, 'Lessons/A.json'));
-    // File events can take a few seconds to arrive when the machine is busy.
-    for (let i = 0; i < 200 && deltas.length === 0; i++) await new Promise((r) => setTimeout(r, 50));
+    // Reads the folder now rather than waiting on the watcher: a watcher only just started can miss a change while
+    // other processes open and close many watchers (as the claude service tests do).
+    await session.settle();
     expect(deltas[0].seq).toBe(1);
 
     const stale = { spaces: [markets, lessons], createdSpaces: [], deletedSpaces: [], journalSpaceId: null, deletes: [], seenSeq: 0, saves: [{ id: 'a', spaceId: markets.id, parentId: null, title: 'A', json: '{"id":"a","title":"A","position":0,"blocks":[]}\n', sidecars: {} }] };

@@ -1,4 +1,8 @@
-import type { DiskDelta, OpenResult } from '@shared/ipc';
+import { spawn } from 'node:child_process';
+import { homedir } from 'node:os';
+import type { ClaudeEvent, DiskDelta, OpenResult } from '@shared/ipc';
+import { fileExists, locateClaude, loginShellLookup } from './claude/locate';
+import { ClaudeService, type ClaudeDeps } from './claude/service';
 import { forgetWorkspace, readRegistry, touchWorkspace } from './registry';
 import { AdoptDeclined, adoptFolder, createWorkspace } from './workspace/create';
 import { WorkspaceSession } from './workspace/session';
@@ -13,19 +17,29 @@ export interface WorkspaceHost {
   trash(abs: string): Promise<void>;
   /** Asks before a folder that already has files in it becomes a workspace. */
   confirmAdopt(root: string): Promise<boolean>;
+  /** Something Claude's running turn reports, for the window. */
+  claudeEvent(e: ClaudeEvent): void;
 }
+
+/** How Claude is found and started. Tests replace these; the app uses the defaults. */
+export type ClaudeOptions = Partial<Pick<ClaudeDeps, 'locate' | 'spawn' | 'stopGraceMs'>>;
+
+const locateDefault = () => locateClaude({ shellLookup: () => loginShellLookup(), exists: fileExists, home: homedir() });
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /** The one open workspace, and switching between workspaces. */
 export class Workspaces {
   session: WorkspaceSession | null = null;
+  /** Claude in the open workspace. Each workspace gets its own, closed with it. */
+  claude: ClaudeService | null = null;
   /** Why the last workspace couldn't be reopened at launch. */
   private launchError: { error: string; path: string } | null = null;
 
   constructor(
     private readonly registryFile: string,
     private readonly host: WorkspaceHost,
+    private readonly claudeOptions: ClaudeOptions = {},
   ) {}
 
   /** At launch: reopens the workspace used last, if there is one. */
@@ -69,6 +83,7 @@ export class Workspaces {
 
   private async switchTo(root: string, isNew: boolean, flushFirst: boolean): Promise<OpenResult> {
     if (flushFirst) await this.host.flushWindow();
+    let claude: ClaudeService | null = null;
     const next = await WorkspaceSession.open(
       root,
       isNew,
@@ -78,16 +93,33 @@ export class Workspaces {
         },
         lost: (text) => {
           if (this.session !== next) return;
+          this.claude?.close();
+          this.claude = null;
           this.session = null;
           this.launchError = { error: text, path: root };
           this.host.opened(null);
           this.host.lost(text);
         },
+        fileChanges: (changes) => {
+          if (this.session === next) claude?.fileChanges(changes);
+        },
       },
       this.host.trash,
     );
+    claude = new ClaudeService(root, next, {
+      locate: this.claudeOptions.locate ?? locateDefault,
+      spawn: this.claudeOptions.spawn ?? spawn,
+      trash: this.host.trash,
+      send: (e) => {
+        if (this.claude === claude) this.host.claudeEvent(e);
+      },
+      stopGraceMs: this.claudeOptions.stopGraceMs,
+    });
+    // The old workspace's turn stops here, before anything of the new one is shown.
+    this.claude?.close();
     this.session?.close();
     this.session = next;
+    this.claude = claude;
     this.launchError = null;
     await touchWorkspace(this.registryFile, root, next.name, new Date());
     this.host.opened(next.name);
@@ -102,7 +134,14 @@ export class Workspaces {
     await forgetWorkspace(this.registryFile, path);
   }
 
+  /** Stops Claude's running turn, if there is one: the window that showed it is closing. */
+  stopClaude(): void {
+    void this.claude?.stop();
+  }
+
   close(): void {
+    this.claude?.close();
+    this.claude = null;
     this.session?.close();
     this.session = null;
   }
