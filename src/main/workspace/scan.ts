@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { readdir, readFile, rename, stat } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { formatJson } from '@shared/formatJson';
 import { nameKey } from '@shared/names';
@@ -147,13 +147,45 @@ const highestPosition = (records: PageRecord[]) =>
     return typeof p === 'number' && Number.isFinite(p) && p > max ? p : max;
   }, -1);
 
+/** The drawing files in a folder: regular files named drawing-<id>.svg. A folder of that name is not one. */
+async function drawingFilesIn(root: string, folder: string): Promise<string[]> {
+  const entries = await readdir(insideRoot(root, folder), { withFileTypes: true }).catch(() => []);
+  return entries.filter((e) => e.isFile() && SIDECAR_NAME.test(e.name)).map((e) => e.name);
+}
+
+/** A folder holding drawing files and nothing else: what a page leaves behind when its file goes. */
+async function isDrawingsOnly(root: string, folder: string): Promise<boolean> {
+  const entries = (await readdir(insideRoot(root, folder), { withFileTypes: true }).catch(() => [])).filter((e) => !isIgnoredName(e.name));
+  return entries.length > 0 && entries.every((e) => e.isFile() && SIDECAR_NAME.test(e.name));
+}
+
+/**
+ * A page file renamed or moved outside the app leaves its folder behind. When that folder holds only the page's
+ * drawings and nothing is in the way, it follows the page file, so the drawings stay with their page.
+ */
+async function followDrawings(walk: Walk, dir: string, records: PageRecord[], folderNames: string[]): Promise<void> {
+  for (const record of records) {
+    const before = walk.prev?.pages.get(record.id)?.path;
+    if (record.error !== undefined || !before || before === record.path) continue;
+    const from = before.slice(0, -'.json'.length);
+    const to = record.path.slice(0, -'.json'.length);
+    const toName = to.slice(dir.length + 1);
+    if (nameKey(from) === nameKey(to) || folderNames.some((n) => nameKey(n) === nameKey(toName))) continue;
+    if (!(await isDrawingsOnly(walk.root, from))) continue;
+    await rename(insideRoot(walk.root, from), insideRoot(walk.root, to));
+    folderNames.push(toName);
+    // The old folder, if it was beside the page, is gone from this folder now.
+    const at = from.startsWith(`${dir}/`) ? folderNames.indexOf(from.slice(dir.length + 1)) : -1;
+    if (at >= 0) folderNames.splice(at, 1);
+  }
+}
+
 /** The drawing files in a page's folder. A file whose size and time haven't changed since the last scan isn't read again. */
 async function readDrawings(walk: Walk, record: PageRecord, folder: string | null): Promise<void> {
   const sidecars: Record<string, FileState> = {};
   const before = walk.prev?.pages.get(record.id)?.sidecars ?? {};
   if (folder !== null) {
-    for (const name of await readdir(insideRoot(walk.root, folder))) {
-      if (!SIDECAR_NAME.test(name)) continue;
+    for (const name of await drawingFilesIn(walk.root, folder)) {
       const abs = insideRoot(walk.root, `${folder}/${name}`);
       const info = await stat(abs);
       const known = before[name];
@@ -174,15 +206,15 @@ async function walkFolder(walk: Walk, dir: string, spaceId: string, parentId: st
 
   const records: PageRecord[] = [];
   for (const name of fileNames) records.push(await readPage(walk, `${dir}/${name}`, spaceId, parentId));
+  await followDrawings(walk, dir, records, folderNames);
 
   // A folder with no page file of its own becomes a page, so the pages in it have somewhere to sit.
   const pageNames = new Set(fileNames.map((name) => nameKey(name.slice(0, -'.json'.length))));
   let position = highestPosition(records);
   for (const folder of folderNames) {
     if (pageNames.has(nameKey(folder))) continue;
-    // Drawing pictures left behind by a page deleted or renamed outside the app don't make a page.
-    const inside = (await readdir(insideRoot(walk.root, `${dir}/${folder}`))).filter((name) => !isIgnoredName(name));
-    if (inside.length > 0 && inside.every((name) => SIDECAR_NAME.test(name))) continue;
+    // Drawings left behind by a page deleted or renamed outside the app don't make a page.
+    if (await isDrawingsOnly(walk.root, `${dir}/${folder}`)) continue;
     const id = newId();
     const now = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
     const rel = `${dir}/${folder}.json`;

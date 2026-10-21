@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -173,4 +173,29 @@ test('a page’s drawing files come with it', async () => {
   expect(snapshot.pages.find((p) => p.id === 'a')!.drawings).toEqual({ 'drawing-d1.svg': '<svg>1</svg>' });
   expect(snapshot.pages.find((p) => p.id === 'b')!.drawings).toEqual({});
   expect(index.pages.get('a')!.sidecars!['drawing-d1.svg'].text).toBe('<svg>1</svg>');
+});
+
+test('a folder named like a drawing file never breaks the scan', async () => {
+  const root = await tmpWorkspace({ 'Markets/Q.json': page('q', 'Q'), 'Markets/Q/drawing-old.svg/': '', 'Markets/Q/drawing-a.svg': '<svg>a</svg>' });
+  const { snapshot } = await scanWorkspace(root);
+  expect(snapshot.pages.find((p) => p.id === 'q')!.drawings).toEqual({ 'drawing-a.svg': '<svg>a</svg>' });
+});
+
+test('a page file renamed outside the app takes its drawings folder along', async () => {
+  const root = await tmpWorkspace({ 'Markets/Foo.json': page('p', 'Foo'), 'Markets/Foo/drawing-d1.svg': '<svg>strokes</svg>' });
+  const first = await scanWorkspace(root);
+  await rename(join(root, 'Markets/Foo.json'), join(root, 'Markets/Bar.json'));
+  const { snapshot } = await scanWorkspace(root, first.index);
+  expect(await read(root, 'Markets/Bar/drawing-d1.svg')).toBe('<svg>strokes</svg>');
+  await expect(read(root, 'Markets/Foo/drawing-d1.svg')).rejects.toThrow();
+  expect(snapshot.pages.find((p) => p.id === 'p')).toMatchObject({ path: 'Markets/Bar.json', drawings: { 'drawing-d1.svg': '<svg>strokes</svg>' } });
+});
+
+test('a drawings folder never moves onto a folder that is already there', async () => {
+  const root = await tmpWorkspace({ 'Markets/Foo.json': page('p', 'Foo'), 'Markets/Foo/drawing-d1.svg': '<svg>1</svg>', 'Markets/Bar/drawing-x.svg': '<svg>x</svg>' });
+  const first = await scanWorkspace(root);
+  await rename(join(root, 'Markets/Foo.json'), join(root, 'Markets/Bar.json'));
+  await scanWorkspace(root, first.index);
+  expect(await read(root, 'Markets/Foo/drawing-d1.svg')).toBe('<svg>1</svg>');
+  expect(await read(root, 'Markets/Bar/drawing-x.svg')).toBe('<svg>x</svg>');
 });
