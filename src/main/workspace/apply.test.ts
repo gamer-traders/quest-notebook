@@ -302,3 +302,47 @@ test.skipIf(process.platform !== 'darwin')('if a page’s folder can’t move, i
     execFileSync('chflags', ['nouchg', join(root, 'Markets/A')]);
   }
 });
+
+const appMade = (x: number) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="400" viewBox="0 0 1000 400" data-background="blank">\n<rect width="1000" height="400" fill="#ffffff"/>\n<path data-tool="pen" data-color="ink" data-size="3" data-pressure="true" data-points="${x},1,0.5 2,2,0.5" d="M${x},1 Q 2,2 Z" fill="#17202a"/>\n</svg>\n`;
+
+test('a drawing changed outside since main last read it is never overwritten: the page is stale', async () => {
+  await setup({ 'Markets/A.json': page('a', 'A'), 'Markets/A/drawing-d1.svg': appMade(1) });
+  await writeFile(join(root, 'Markets/A/drawing-d1.svg'), appMade(9));
+  const result = await apply({ saves: [{ ...save('a', 'A', 'Markets', null, page('a', 'A edited')), sidecars: { 'drawing-d1.svg': appMade(2) } }] });
+  expect(result.stale).toEqual(['a']);
+  expect(await read('Markets/A/drawing-d1.svg')).toBe(appMade(9));
+  expect(await read('Markets/A.json')).toBe(page('a', 'A'));
+});
+
+test('a drawing file that appeared outside is never overwritten either', async () => {
+  await setup({ 'Markets/A.json': page('a', 'A') });
+  await mkdir(join(root, 'Markets/A'));
+  await writeFile(join(root, 'Markets/A/drawing-d1.svg'), appMade(7));
+  const result = await apply({ saves: [{ ...save('a', 'A'), sidecars: { 'drawing-d1.svg': appMade(2) } }] });
+  expect(result.stale).toEqual(['a']);
+  expect(await read('Markets/A/drawing-d1.svg')).toBe(appMade(7));
+});
+
+test('a drawing file the app didn’t write goes to the Trash before it is replaced', async () => {
+  const handmade = '<svg viewBox="0 0 1000 400"><text x="1" y="2">62k</text><path data-points="1,1 2,2"/></svg>';
+  await setup({ 'Markets/A.json': page('a', 'A'), 'Markets/A/drawing-d1.svg': handmade });
+  const result = await apply({ saves: [{ ...save('a', 'A'), sidecars: { 'drawing-d1.svg': appMade(2) } }] });
+  expect(result.ok).toBe(true);
+  expect(trashed).toEqual(['Markets/A/drawing-d1.svg']);
+  expect(await read('Markets/A/drawing-d1.svg')).toBe(appMade(2));
+});
+
+test('the app’s own drawing file is simply replaced', async () => {
+  await setup({ 'Markets/A.json': page('a', 'A'), 'Markets/A/drawing-d1.svg': appMade(1) });
+  await apply({ saves: [{ ...save('a', 'A'), sidecars: { 'drawing-d1.svg': appMade(2) } }] });
+  expect(trashed).toEqual([]);
+  expect(await read('Markets/A/drawing-d1.svg')).toBe(appMade(2));
+});
+
+test('drawing files written before a failure are remembered, so they never come back as outside changes', async () => {
+  await setup({ 'Markets/A.json': page('a', 'A'), 'Markets/A/drawing-b.svg/': '' });
+  const result = await apply({ saves: [{ ...save('a', 'A', 'Markets', null, page('a', 'A edited')), sidecars: { 'drawing-a.svg': appMade(2), 'drawing-b.svg': appMade(3) } }] });
+  expect(result.ok).toBe(false);
+  expect(index.pages.get('a')!.sidecars!['drawing-a.svg'].text).toBe(appMade(2));
+});

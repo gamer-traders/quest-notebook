@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest';
 import type { Stroke } from './model';
 import { drawingFromSvg, drawingToSvg } from './svg';
+import { isAppMadeDrawing } from '@shared/drawingFile';
 
 const pen: Stroke = { id: 'p', tool: 'pen', color: 'ink', size: 3, pressure: true, points: [10, 10, 0.5, 50, 40, 0.6, 90, 20, 0.5] };
 const marker: Stroke = { ...pen, id: 'h', tool: 'highlighter', color: 'yellow', size: 22 };
@@ -63,4 +64,11 @@ test('text that is not a drawing reads as nothing', () => {
 test('the app’s own picture reads back to exactly the same text', () => {
   const text = drawingToSvg({ height: 400, background: 'grid', strokes: [marker, pen] });
   expect(drawingToSvg(drawingFromSvg(text)!)).toBe(text);
+});
+
+test('everything the app writes counts as the app’s own drawing file', () => {
+  for (const background of ['blank', 'grid', 'lines'] as const) {
+    expect(isAppMadeDrawing(drawingToSvg({ height: 400, background, strokes: [pen, marker] }))).toBe(true);
+    expect(isAppMadeDrawing(drawingToSvg({ height: 400, background, strokes: [] }))).toBe(true);
+  }
 });

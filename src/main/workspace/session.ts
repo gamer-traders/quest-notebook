@@ -96,7 +96,8 @@ export class WorkspaceSession {
       const fresh = { ...batch, saves: batch.saves.filter((s) => !isStale(s.id)), deletes: batch.deletes.filter((id) => !isStale(id)) };
       const result = await applyFlush(this.root, this.known.index, fresh, { trash: this.trash, now: () => new Date() });
       this.known = knownAfterFlush(this.known, fresh);
-      return stale.length ? { ...result, stale } : result;
+      const all = [...stale, ...(result.stale ?? [])];
+      return all.length ? { ...result, stale: all } : result;
     });
   }
 

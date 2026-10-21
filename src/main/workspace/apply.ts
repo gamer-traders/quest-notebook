@@ -2,6 +2,7 @@ import { mkdir, readdir, readFile, rename, rmdir, stat } from 'node:fs/promises'
 import { formatJson } from '@shared/formatJson';
 import { SIDECAR_NAME, type FlushBatch, type FlushResult, type PageSave } from '@shared/ipc';
 import { nameKey, safeName, uniqueName } from '@shared/names';
+import { isAppMadeDrawing } from '@shared/drawingFile';
 import { insideRoot, writeFileAtomic } from './paths';
 import { CONFIG_PATH, isIgnoredName, readConfig, type FileState, type ScanIndex } from './scan';
 
@@ -31,6 +32,7 @@ const baseOf = (path: string) => folderOfPage(path.slice(path.lastIndexOf('/') +
  */
 export async function applyFlush(root: string, index: ScanIndex, batch: FlushBatch, deps: ApplyDeps): Promise<FlushResult> {
   const errors: string[] = [];
+  const stale: string[] = [];
   const paths: Record<string, string> = {};
   const abs = (rel: string) => insideRoot(root, rel);
   const exists = (rel: string) => stat(abs(rel)).then(() => true, () => false);
@@ -181,7 +183,8 @@ export async function applyFlush(root: string, index: ScanIndex, batch: FlushBat
       }
       paths[save.id] = target;
     } catch (error) {
-      errors.push(message(error));
+      if (error instanceof StaleSave) stale.push(save.id);
+      else errors.push(message(error));
     }
   }
 
@@ -199,21 +202,39 @@ export async function applyFlush(root: string, index: ScanIndex, batch: FlushBat
       return false;
     };
     const writes = Object.entries(sidecars).filter(([name]) => safe(name));
-    if (writes.length) await mkdir(abs(folder), { recursive: true });
+
+    // Check them all before writing any: a drawing changed outside since main last read it, or one that appeared,
+    // is never written over. The page waits for the window to see the change and plan again.
+    const onDisk = new Map<string, string | null>();
     for (const [name, text] of writes) {
-      const file = `${folder}/${name}`;
-      if (known[name]?.text === text && (await exists(file))) continue;
-      if ((await readFile(abs(file), 'utf8').catch(() => null)) !== text) await writeFileAtomic(abs(file), text);
-      const info = await stat(abs(file));
-      known[name] = { text, mtimeMs: info.mtimeMs, size: info.size };
+      const current = await readFile(abs(`${folder}/${name}`), 'utf8').catch(() => null);
+      if (current !== null && current !== text && current !== known[name]?.text) throw new StaleSave(id);
+      onDisk.set(name, current);
     }
-    for (const name of removed.filter(safe)) {
-      const file = `${folder}/${name}`;
-      if (await stat(abs(file)).then((info) => info.isFile(), () => false)) await deps.trash(abs(file));
-      delete known[name];
-      leftBehind.add(folder);
+
+    try {
+      if (writes.length) await mkdir(abs(folder), { recursive: true });
+      for (const [name, text] of writes) {
+        const file = `${folder}/${name}`;
+        const current = onDisk.get(name) ?? null;
+        if (current !== text) {
+          // Someone else's work in the file (a label, a shape, a hand-drawn path) is kept in the Trash.
+          if (current !== null && !isAppMadeDrawing(current)) await deps.trash(abs(file));
+          await writeFileAtomic(abs(file), text);
+        }
+        const info = await stat(abs(file));
+        known[name] = { text, mtimeMs: info.mtimeMs, size: info.size };
+      }
+      for (const name of removed.filter(safe)) {
+        const file = `${folder}/${name}`;
+        if (await stat(abs(file)).then((info) => info.isFile(), () => false)) await deps.trash(abs(file));
+        delete known[name];
+        leftBehind.add(folder);
+      }
+    } finally {
+      // Whatever was written is remembered, even when a later file fails, so it never reads as an outside change.
+      if (entry) entry.sidecars = known;
     }
-    if (entry) entry.sidecars = known;
     return known;
   }
 
@@ -251,10 +272,17 @@ export async function applyFlush(root: string, index: ScanIndex, batch: FlushBat
     }
   }
 
-  return { ok: errors.length === 0, ...(errors.length ? { error: errors[0] } : {}), paths };
+  return { ok: errors.length === 0, ...(errors.length ? { error: errors[0] } : {}), paths, ...(stale.length ? { stale } : {}) };
 }
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/** A page whose drawing changed on disk since main last read it: left for the window to plan again. */
+class StaleSave extends Error {
+  constructor(id: string) {
+    super(`The page ${id} changed on disk`);
+  }
+}
 
 /** Space folders in order: those the batch lists, in its order, then any others main knows, as they were. */
 export function spaceOrder(batch: FlushBatch, index: ScanIndex): string[] {
