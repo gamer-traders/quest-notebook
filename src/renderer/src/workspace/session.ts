@@ -2,20 +2,69 @@ import { create } from 'zustand';
 import type { DiskDelta, OpenResult, WorkspaceSnapshot } from '@shared/ipc';
 import { useStore } from '../store';
 import { seedFor } from '../lib/seed';
-import { childrenOf } from '../page/tree';
+import { childrenOf, displayTitle, positionBetween } from '../page/tree';
 import { unsavedEditors } from '../editor/pending';
 import { deltaToNotebooks, drawingsIn, snapshotToState } from './load';
 import { startSync, useSaveStatus, type SyncHandle } from './sync';
+import type { Notebook } from '../types';
 
 let sync: SyncHandle | null = null;
 
 /** Which screen shows, and why a workspace couldn't be opened, if it couldn't. 'loading' is the moment before main answers. */
 export const useWorkspaceUi = create<{ error: string | null; screen: 'loading' | 'app' | 'welcome' | 'create' }>(() => ({ error: null, screen: 'loading' }));
 
+/** What to tell the owner about a change from disk the app didn't simply take in, until they dismiss it. */
+export const useDiskNotice = create<{ text: string | null }>(() => ({ text: null }));
+
+/** The notice for pages deleted outside the app that were kept, because they were being edited. */
+export function keptNotice(titles: string[]): string {
+  const names = titles.map((t) => `“${displayTitle(t)}”`);
+  if (names.length === 1) return `${names[0]} was deleted outside the app while you were editing it, so it was saved again.`;
+  return `${names.slice(0, -1).join(', ')} and ${names.at(-1)} were deleted outside the app while you were editing them, so they were saved again.`;
+}
+
+/**
+ * Pages kept after their files were deleted outside, whose parent or space went too: each moves to the top of its
+ * space, or of the first space left, so it shows and can be saved. One under a page that stayed goes with it.
+ */
+function rehome(ids: string[]): void {
+  useStore.setState((s) => {
+    const pages = new Map(s.notebooks.map((n) => [n.id, n]));
+    const spaces = new Set(s.spaces.map((sp) => sp.id));
+    const depth = (id: string) => {
+      let d = 0;
+      for (let p = pages.get(id)?.parentId; p && d < pages.size; p = pages.get(p)?.parentId) d++;
+      return d;
+    };
+    const moved = new Map<string, Notebook>();
+    // Parents first, so a page under one that moved goes where its parent went.
+    for (const id of [...ids].sort((a, b) => depth(a) - depth(b))) {
+      const nb = pages.get(id);
+      if (!nb) continue;
+      const parent = nb.parentId === null ? undefined : pages.get(nb.parentId);
+      let next: Notebook | null = null;
+      if (parent) {
+        if (parent.spaceId !== nb.spaceId) next = { ...nb, spaceId: parent.spaceId };
+      } else if (nb.parentId !== null || !spaces.has(nb.spaceId)) {
+        const spaceId = spaces.has(nb.spaceId) ? nb.spaceId : s.spaces[0]?.id;
+        if (spaceId === undefined) continue;
+        const top = childrenOf([...pages.values()], spaceId, null).filter((n) => n.id !== id);
+        next = { ...nb, spaceId, parentId: null, position: positionBetween(top.at(-1)?.position, undefined) };
+      }
+      if (next) {
+        pages.set(id, next);
+        moved.set(id, next);
+      }
+    }
+    return moved.size ? { notebooks: s.notebooks.map((n) => moved.get(n.id) ?? n) } : {};
+  });
+}
+
 /** Shows a workspace read from disk, and from then on keeps the disk in step with it. */
 export function startWorkspace(snapshot: WorkspaceSnapshot): void {
   sync?.stop();
   useSaveStatus.setState({ error: null });
+  useDiskNotice.setState({ text: null });
   const loaded = snapshotToState(snapshot);
   useStore.getState().loadWorkspace(snapshot.root, snapshot.name, loaded);
   sync = startSync(window.quest.workspace, useStore, loaded.repaired, loaded.drawingsToWrite);
@@ -60,9 +109,15 @@ export function applyDisk(delta: DiskDelta): void {
   // Drawing files written by hand, or missing, are written in the app's form.
   for (const [pageId, ids] of drawingsToWrite) sync.writeDrawings(pageId, ids);
 
-  // A page being edited that was deleted outside stays, and is written again whole, drawings and all.
-  const kept = delta.removed.filter((id) => pending.has(id));
-  if (kept.length) sync.rewritePages(kept);
+  // A page being edited that was deleted outside stays, and is written again whole, drawings and all. The owner
+  // is told, since the delete didn't happen.
+  const kept = delta.removed.filter((id) => pending.has(id) && current.some((n) => n.id === id));
+  if (kept.length) {
+    rehome(kept);
+    sync.rewritePages(kept);
+    const pages = new Map(useStore.getState().notebooks.map((n) => [n.id, n]));
+    useDiskNotice.setState({ text: keptNotice(kept.map((id) => pages.get(id)?.title ?? '')) });
+  }
 
   // A page being edited keeps its edits, but takes the outside version of each drawing it didn't touch.
   for (const record of delta.pages) if (pending.has(record.id)) sync.adoptDrawings(record.id, drawingsIn(record));

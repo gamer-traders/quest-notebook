@@ -5,6 +5,7 @@ import { NotebookView } from './components/NotebookView';
 import { ReviewView } from './components/ReviewView';
 import { IS_MAC, SettingsDialog, isSettingsShortcut } from './components/SettingsDialog';
 import { SaveWarning } from './components/SaveWarning';
+import { DiskNotice } from './components/DiskNotice';
 import { Welcome } from './components/Welcome';
 import { useWorkspaceUi } from './workspace/session';
 
@@ -50,6 +51,7 @@ export function App() {
       <Sidebar onNavigate={() => setNavOpen(false)} onOpenSettings={(trigger) => setSettings({ trigger })} />
       <main className="main">
         <SaveWarning />
+        <DiskNotice />
         {view === 'review' ? <ReviewView /> : <NotebookView />}
       </main>
       {settings && <SettingsDialog trigger={settings.trigger} onClose={() => setSettings(null)} />}

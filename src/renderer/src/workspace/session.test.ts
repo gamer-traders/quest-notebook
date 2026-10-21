@@ -5,7 +5,7 @@ import { useStore } from '../store';
 import type { DrawingCell } from '../types';
 import { unsavedEditors } from '../editor/pending';
 import type { PageBlock } from '../page/blockTypes';
-import { applyDisk, flushWorkspace, startWorkspace, stopWorkspace } from './session';
+import { applyDisk, flushWorkspace, startWorkspace, stopWorkspace, useDiskNotice } from './session';
 
 const file = (id: string, title: string, text: string) => ({ id, title, position: 0, created: '2026-10-20T00:00:00Z', updated: '2026-10-20T00:00:00Z', blocks: [{ type: 'paragraph', text }] });
 
@@ -56,6 +56,7 @@ test('saving before the window closes takes in words still waiting in the editor
     expect(textOf(batches[0].saves[0].json!)).toBe('last words');
   } finally {
     stop();
+    unsavedEditors.clear('a');
   }
 });
 
@@ -141,4 +142,60 @@ test('a page deleted outside while being edited is saved again whole, with every
   const save = batches.flatMap((b) => b.saves).find((s) => s.id === 'b')!;
   expect(JSON.parse(save.json!).title).toBe('B edited');
   expect(Object.keys(save.sidecars)).toEqual(['drawing-d1.svg']);
+});
+
+test('a page deleted outside while being edited is saved again, and a notice says so', () => {
+  useStore.getState().updateNotebook('b', { title: 'B edited' });
+  applyDisk({ seq: 1, spaces: snapshot.spaces, journalSpaceId: null, pages: [], removed: ['a', 'b'] });
+  expect(useDiskNotice.getState().text).toContain('“B edited”');
+  expect(useDiskNotice.getState().text).not.toContain('“A”');
+});
+
+test('a page deleted outside that nobody was editing goes quietly', () => {
+  applyDisk({ seq: 1, spaces: snapshot.spaces, journalSpaceId: null, pages: [], removed: ['a'] });
+  expect(useDiskNotice.getState().text).toBeNull();
+});
+
+test('opening a workspace clears the notice', () => {
+  useStore.getState().updateNotebook('b', { title: 'B edited' });
+  applyDisk({ seq: 1, spaces: snapshot.spaces, journalSpaceId: null, pages: [], removed: ['b'] });
+  startWorkspace(snapshot);
+  expect(useDiskNotice.getState().text).toBeNull();
+});
+
+const subPage = { id: 'c', spaceId: 'sm', parentId: 'a', path: 'Markets/A/C.json', mtimeMs: 0, file: { ...file('c', 'C', 'sea'), position: 3 } };
+const page = (id: string) => useStore.getState().notebooks.find((n) => n.id === id);
+
+test('a sub-page being edited whose parent was deleted outside moves to the top of its space, and is saved there', async () => {
+  applyDisk({ seq: 1, spaces: snapshot.spaces, journalSpaceId: null, pages: [subPage], removed: [] });
+  await flushWorkspace();
+  batches = [];
+  useStore.getState().updateNotebook('c', { title: 'C edited' });
+  applyDisk({ seq: 2, spaces: snapshot.spaces, journalSpaceId: null, pages: [], removed: ['a', 'c'] });
+  expect(page('a')).toBeUndefined();
+  expect(page('c')).toMatchObject({ spaceId: 'sm', parentId: null });
+  // After the pages already at the top.
+  expect(page('c')!.position).toBeGreaterThan(page('b')!.position);
+  await flushWorkspace();
+  const save = batches.flatMap((b) => b.saves).find((s) => s.id === 'c')!;
+  expect(save).toMatchObject({ spaceId: 'sm', parentId: null });
+});
+
+test('a page being edited whose space was deleted outside moves to the top of the first space left', async () => {
+  useStore.getState().updateNotebook('b', { title: 'B edited' });
+  applyDisk({ seq: 1, spaces: [{ id: 'sl', name: 'Lessons' }], journalSpaceId: null, pages: [], removed: ['a', 'b'] });
+  expect(page('b')).toMatchObject({ spaceId: 'sl', parentId: null });
+  await flushWorkspace();
+  expect(batches.flatMap((b) => b.saves).find((s) => s.id === 'b')).toMatchObject({ spaceId: 'sl', parentId: null });
+});
+
+test('a sub-page kept with its parent, both being edited, stays under it when their space goes', async () => {
+  applyDisk({ seq: 1, spaces: snapshot.spaces, journalSpaceId: null, pages: [{ ...subPage, parentId: 'b', path: 'Markets/B/C.json' }], removed: [] });
+  await flushWorkspace();
+  useStore.getState().updateNotebook('b', { title: 'B edited' });
+  useStore.getState().updateNotebook('c', { title: 'C edited' });
+  applyDisk({ seq: 2, spaces: [{ id: 'sl', name: 'Lessons' }], journalSpaceId: null, pages: [], removed: ['a', 'b', 'c'] });
+  expect(page('b')).toMatchObject({ spaceId: 'sl', parentId: null });
+  expect(page('c')).toMatchObject({ spaceId: 'sl', parentId: 'b' });
+  expect(useDiskNotice.getState().text).toContain('“B edited” and “C edited”');
 });
