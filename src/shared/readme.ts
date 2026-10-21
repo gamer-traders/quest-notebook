@@ -1,5 +1,5 @@
 /** Which version of the README this is. A README an earlier app version wrote is replaced by this one. */
-export const README_MARKER = '<!-- quest-notebook-readme: 2 -->';
+export const README_MARKER = '<!-- quest-notebook-readme: 3 -->';
 
 /** The README.md written into a new workspace: the file format, for the people and AI tools that open the folder. */
 export const WORKSPACE_README = `# Quest Notebook workspace
@@ -15,6 +15,7 @@ them directly, by hand or with an AI tool. While the app is open, it picks up ch
 README.md                     this file
 .quest/workspace.json         workspace settings: name, space order, the journal space
 .quest/state.json             what the app was showing (the app's own; don't edit)
+.quest/chats/                 the Claude panel's chats (the app's own; don't edit)
 <Space>/                      a top-level folder is a space, named after the folder
   <Page title>.json           a page
   <Page title>/               the page's folder, if it has sub-pages or drawings
@@ -29,6 +30,7 @@ README.md                     this file
 - **A page and its folder go together.** Rename or move the folder along with the page file. If the folder holds only drawings and you forget it, the app moves it after the page file for you.
 - **A folder with no page file:** it becomes a page, and the app writes its \`.json\`. A folder holding only drawing files doesn't: it's what a page left behind.
 - **This README** is rewritten by the app when the file format changes. Keep your own notes in pages.
+- **The app's Claude panel** edits only page files and drawing files inside space folders. It never writes this README, \`.quest/\` or other files.
 
 ## Page file
 

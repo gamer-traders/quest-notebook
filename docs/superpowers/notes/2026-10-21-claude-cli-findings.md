@@ -273,3 +273,20 @@ the hook events; it is not committed because the hook output holds personal cont
   tool_result error and a `permission_denials` entry), not from `is_error`.
 - Edit rules also gate `Write`.
 - `Read` is allowed without a path rule but `--restricted` confines it to the cwd.
+
+## Live check in the app (22 Oct 2026)
+
+The built app, started with `ANTHROPIC_API_KEY=sk-ant-invalid-live-check` in its environment, ran these turns on a copy of a sample workspace using the owner's subscription:
+
+| check | result |
+|---|---|
+| A turn runs with the full flag set above, including `--strict-mcp-config` and `-- <message>` | works |
+| The bogus API key in the app's environment | ignored: turns ran on the subscription |
+| An edit to the open page, then Undo | the page updated live, and undo restored the file byte for byte |
+| `@` reference plus "create a page" | the page was created and listed, and undo moved it to the Trash |
+| Writing `README.md` | Claude declined, citing the rules in the workspace guide, so no refusal event was needed |
+| `--resume` after quitting and relaunching the app | remembered the first message |
+| Stop mid-reply (SIGINT from Node) | the CLI exited within a second, the partial text was kept, and no process was left |
+| `claude` not findable (empty HOME, bare PATH) | the panel shows the install message |
+
+The logged-out state was not checked live; that needs logging out.

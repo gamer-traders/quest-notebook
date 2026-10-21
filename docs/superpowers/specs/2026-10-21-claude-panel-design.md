@@ -100,10 +100,15 @@ The workspace was designed to be clear to an AI: plain JSON pages, drawings as S
 - **Invocation, per turn:**
 
   ```
-  claude -p <message> --output-format stream-json --verbose --include-partial-messages
-         [--resume <session-id>] --restricted --tools Read,Glob,Grep,Edit,Write
-         --permission-mode acceptEdits --append-system-prompt <workspace guide>
+  claude -p --output-format stream-json --verbose --include-partial-messages
+         [--resume <session-id>] --restricted --strict-mcp-config
+         --tools Read,Glob,Grep,Edit,Write --permission-mode default
+         --allowedTools Read Glob Grep "Edit(/*/**/*.json)" "Edit(/*/**/drawing-*.svg)"
+         --disallowedTools "Edit(/.quest/**)"
+         --append-system-prompt <workspace guide> -- <message>
   ```
+
+  (Settled by the first experiment; see "Changed while building". The first draft used `--permission-mode acceptEdits`, which leaked.)
 
   - Run it with the **workspace folder as the working directory**.
   - **Remove `ANTHROPIC_API_KEY`** and `ANTHROPIC_AUTH_TOKEN` from its environment, so the subscription login is used.
@@ -172,3 +177,27 @@ The workspace was designed to be clear to an AI: plain JSON pages, drawings as S
 7. With `ANTHROPIC_API_KEY` set in the app's environment, the CLI still runs on the subscription, shown in the init event or `/status` output.
 8. Rename `claude` out of the PATH: the panel shows the install help. Claude can't write outside the workspace or run commands; an attempt is refused and shown as such.
 9. `npm test`, typecheck and build pass. Typing in a page while Claude streams stays smooth.
+
+## Changed while building (22 Oct 2026)
+
+What the experiments, reviews and the live check changed in the design above:
+
+- **Permissions:**
+  - Default permission mode with command-line allow and deny rules, never `acceptEdits`. In the experiment, `acceptEdits` with a deny-rules settings file let Claude write the README, `.quest/workspace.json` and a top-level file. The default mode refuses anything not allowed.
+  - `--strict-mcp-config` keeps the account's claude.ai connectors out.
+  - The message goes last, after `--`, because a message starting with `-` was read as an option.
+- **Environment:** besides `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN`, the CLI's environment drops `ANTHROPIC_BASE_URL` and every `CLAUDE*` variable except `CLAUDE_CONFIG_DIR`. An app started from inside Claude Code inherits variables that would put the CLI in bare mode or send it through a proxy. `PATH` starts with the folder `claude` was found in, so an npm-installed CLI finds `node`.
+- **New spaces:** the allow rules can't tell an existing space folder from a new one, so Claude can create a page in a new top-level folder, which becomes a new space. The app records it, and undo removes that folder too when it's left empty. A space that existed before the turn is never removed.
+- **What a reply records:**
+  - Only files Claude itself edited or wrote in that turn, plus the page the app writes for a new folder Claude made. A sync client or another editor changing files during a turn isn't recorded as Claude's.
+  - When the app then tidies a page Claude wrote (filling in a missing field, or moving inline drawing strokes to their file), that tidy-up counts as part of Claude's change, so undo doesn't ask about it. An edit by the owner still makes undo ask.
+- **Stopping and closing:**
+  - Stop sends SIGINT, then SIGTERM, then SIGKILL, a few seconds apart. Pressing Stop twice sends SIGKILL at once.
+  - Switching workspace or quitting mid-turn stops the CLI. It also saves the reply so far, with what it changed, into that workspace's chat, so it can still be undone.
+- **Chats:**
+  - A chat keeps Claude's session id only after a reply that succeeded.
+  - If Claude no longer has that session, the next message starts a fresh one instead of failing again.
+  - Session ids in chat files must be UUIDs, so a hand-edited chat can't pass options to the CLI.
+- **Undo** saves the window's pending edits first, so a word typed just before Undo is seen as a change and Undo asks.
+- **While Claude works on a page,** its Delete button is disabled too.
+- **Quick actions** send at once. A pencil button beside each puts the text in the message box to edit first.
