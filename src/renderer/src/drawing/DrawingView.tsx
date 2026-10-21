@@ -25,7 +25,15 @@ export function DrawingView({ notebookId, drawing }: { notebookId: string; drawi
   const [fullScreen, setFullScreen] = useState(false);
   const overlay = useRef<HTMLDivElement>(null);
 
-  const current = (): Snapshot => ({ strokes: drawing.strokes, height: drawing.height, background: drawing.background });
+  /** The drawing as the page holds it now: newer than this render's after a change from disk, or once off screen. */
+  const latest = (): DrawingCell => {
+    const item = useStore.getState().notebooks.find((n) => n.id === notebookId)?.items[drawing.id];
+    return item?.type === 'drawing' ? item : drawing;
+  };
+  const current = (): Snapshot => {
+    const { strokes, height, background } = latest();
+    return { strokes, height, background };
+  };
 
   const apply = useCallback(
     (next: Snapshot) => useStore.getState().updateItem<DrawingCell>(notebookId, drawing.id, next),
@@ -48,14 +56,17 @@ export function DrawingView({ notebookId, drawing }: { notebookId: string; drawi
     setVersion((v) => v + 1);
   };
 
-  const onStroke = (stroke: Stroke) => change({ strokes: [...drawing.strokes, stroke], height: grownHeight(drawing.height, strokeBottom(stroke)) });
+  const onStroke = (stroke: Stroke) => {
+    const now = latest();
+    change({ strokes: [...now.strokes, stroke], height: grownHeight(now.height, strokeBottom(stroke)) });
+  };
   const onErase = (ids: string[]) => {
     const gone = new Set(ids);
-    change({ strokes: drawing.strokes.filter((s) => !gone.has(s.id)) });
+    change({ strokes: latest().strokes.filter((s) => !gone.has(s.id)) });
   };
   const onBackground = (background: Background) => {
     pen.setPen({ background });
-    if (background !== drawing.background) change({ background });
+    if (background !== latest().background) change({ background });
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
@@ -102,7 +113,14 @@ export function DrawingView({ notebookId, drawing }: { notebookId: string; drawi
   );
 
   const canvas = (where: string) => (
-    <DrawingCanvas drawing={drawing} pen={pen} onStroke={onStroke} onErase={onErase} patternId={`rules-${drawing.id}-${where}`} />
+    <DrawingCanvas
+      drawing={drawing}
+      pen={pen}
+      onStroke={onStroke}
+      onErase={onErase}
+      patternId={`rules-${drawing.id}-${where}`}
+      liveKey={`${notebookId}/${drawing.id}/${where}`}
+    />
   );
 
   const more = (
