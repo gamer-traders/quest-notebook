@@ -38,3 +38,11 @@ test('the list is sorted by path', () => {
   turn.add([change('Lessons/Z.json', 'a', 'b')]);
   expect(turn.list().map((c) => c.path)).toEqual(['Lessons/Z.json', 'Markets/A.json', 'Markets/C.json']);
 });
+
+test('newSpace stays set once any change for the path had it', () => {
+  const turn = new TurnChanges();
+  turn.add([change('New/P.json', null, 'a', { newSpace: true })]);
+  turn.add([change('New/P.json', 'a', 'b')]);
+  turn.add([change('Markets/A.json', 'a', 'b')]);
+  expect(turn.list().map((c) => [c.path, c.newSpace])).toEqual([['Markets/A.json', undefined], ['New/P.json', true]]);
+});

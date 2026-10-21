@@ -7,7 +7,11 @@ export class TurnChanges {
   add(changes: FileChange[]): void {
     for (const change of changes) {
       const first = this.byPath.get(change.path);
-      this.byPath.set(change.path, first ? { ...change, kind: first.kind, before: first.before } : { ...change });
+      const newSpace = first?.newSpace || change.newSpace;
+      const merged: FileChange = first ? { ...change, kind: first.kind, before: first.before } : { ...change };
+      if (newSpace) merged.newSpace = true;
+      else delete merged.newSpace;
+      this.byPath.set(change.path, merged);
     }
   }
 

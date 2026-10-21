@@ -5,10 +5,10 @@ import { insideRoot, writeFileAtomic } from '../workspace/paths';
 
 const readOrNull = (abs: string) => readFile(abs, 'utf8').catch(() => null);
 
-/** Removes the folders above a trashed file while they're empty, stopping below the space folder, which stays. */
-async function removeEmptyParents(root: string, path: string): Promise<void> {
+/** Removes the folders above a trashed file while they're empty, stopping below the space folder, which stays unless the turn made it. */
+async function removeEmptyParents(root: string, path: string, includeSpace: boolean): Promise<void> {
   const parts = path.split('/');
-  for (let depth = parts.length - 1; depth >= 2; depth--) {
+  for (let depth = parts.length - 1; depth >= (includeSpace ? 1 : 2); depth--) {
     try {
       await rmdir(insideRoot(root, parts.slice(0, depth).join('/')));
     } catch {
@@ -34,7 +34,7 @@ export async function undoChanges(root: string, changes: FileChange[], opts: { f
     if (change.before === null) {
       if (current === null) continue;
       await opts.trash(abs);
-      await removeEmptyParents(root, change.path);
+      await removeEmptyParents(root, change.path, change.newSpace === true);
     } else {
       await mkdir(dirname(abs), { recursive: true });
       await writeFileAtomic(abs, change.before);

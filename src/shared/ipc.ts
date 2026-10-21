@@ -183,6 +183,8 @@ export interface FileChange {
   pageId?: string;
   kind: 'edited' | 'created';
   drawing: boolean;
+  /** The file's top folder (its space) didn't exist before the turn. Set by the turn's service, not by the scanner. */
+  newSpace?: boolean;
   before: string | null;
   after: string | null;
 }

@@ -72,3 +72,22 @@ test('a path outside the workspace is refused', async () => {
   await expect(undoChanges(root, [edit('../x.json', 'a', 'b')], { force: true, trash })).rejects.toThrow(/outside/);
   expect(await exists(join(root, '../x.json'))).toBe(false);
 });
+
+test('a space folder the turn created goes with its created page', async () => {
+  const root = await workspace({ 'Markets/x.json': 'k', 'NewSpace/Page.json': 'p' });
+  await undoChanges(root, [{ ...created('NewSpace/Page.json', 'p'), newSpace: true }], { force: false, trash });
+  expect(await exists(join(root, 'NewSpace'))).toBe(false);
+  expect(await exists(join(root, 'Markets'))).toBe(true);
+});
+
+test('without the flag the space folder stays', async () => {
+  const root = await workspace({ 'NewSpace/Page.json': 'p' });
+  await undoChanges(root, [created('NewSpace/Page.json', 'p')], { force: false, trash });
+  expect(await exists(join(root, 'NewSpace'))).toBe(true);
+});
+
+test('a flagged space folder that still holds another file stays', async () => {
+  const root = await workspace({ 'NewSpace/Page.json': 'p', 'NewSpace/Other.json': 'o' });
+  await undoChanges(root, [{ ...created('NewSpace/Page.json', 'p'), newSpace: true }], { force: false, trash });
+  expect(await exists(join(root, 'NewSpace/Other.json'))).toBe(true);
+});
