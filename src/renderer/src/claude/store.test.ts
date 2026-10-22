@@ -1,12 +1,22 @@
 // @vitest-environment jsdom
 import { beforeEach, expect, test, vi } from 'vitest';
-import type { Chat, ChatMessage, ClaudeEvent, QuestApi } from '@shared/ipc';
+import type { Chat, ChatMessage, ChatSummary, ClaudeEvent, ClaudeStatus, FileChange, QuestApi, UndoResult } from '@shared/ipc';
+import { useStore } from '../store';
+import type { Notebook } from '../types';
 import { bindClaude, readPanel, useClaude, writePanel } from './store';
 
 type Api = QuestApi['claude'];
 
 const chatOf = (id: string, messages: ChatMessage[] = []): Chat => ({ id, title: 't', sessionId: null, created: 'c', updated: 'u', messages });
 const reply = (id: string, text = 'hi'): ChatMessage => ({ id, role: 'assistant', text, created: 'c' });
+const summary = (id: string): ChatSummary => ({ id, title: id, updated: 'u' });
+const page = (id: string, title: string): Notebook => ({ id, title, spaceId: 's', parentId: null, position: 0, createdAt: 0, updatedAt: 0, blocks: [], items: {} });
+const change = (path: string, pageId: string): FileChange => ({ path, pageId, kind: 'edited', drawing: path.endsWith('.svg'), before: '{}', after: '{}' });
+/** A promise and the function that settles it. */
+function later<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
+  let resolve!: (v: T) => void;
+  return { promise: new Promise<T>((r) => (resolve = r)), resolve };
+}
 
 let handler: (e: ClaudeEvent) => void;
 let api: { [K in keyof Api]: ReturnType<typeof vi.fn> };
@@ -131,14 +141,16 @@ test('an action with a known id replaces the earlier one', async () => {
   ]);
 });
 
-test('undo with conflicts asks, retries with force on only those paths, and not on no', async () => {
-  useClaude.setState({ chat: chatOf('c1') });
-  api.undo.mockResolvedValueOnce({ undone: ['a'], conflicts: ['b'] }).mockResolvedValueOnce({ undone: ['b'], conflicts: [] });
+test('undo with conflicts asks, naming the pages, retries with force on only those paths, and not on no', async () => {
+  useStore.setState({ notebooks: [page('a', 'Support and resistance'), page('w', 'Weekly levels')] });
+  const changes = [change('M/A.json', 'a'), change('M/A/drawing-x.svg', 'a'), change('M/W.json', 'w'), change('M/X.json', 'x')];
+  useClaude.setState({ chat: chatOf('c1', [{ ...reply('m1'), changes }]) });
+  api.undo.mockResolvedValueOnce({ undone: ['M/X.json'], conflicts: ['M/A.json', 'M/A/drawing-x.svg', 'M/W.json'] }).mockResolvedValueOnce({ undone: [], conflicts: [] });
   api.readChat.mockResolvedValue(chatOf('c1', [reply('m1')]));
   await useClaude.getState().undo('m1', null);
-  expect(confirm).toHaveBeenCalledWith("These pages changed since Claude's reply. Undo anyway?");
+  expect(confirm).toHaveBeenCalledWith("These pages changed since Claude's reply: “Support and resistance”, “Weekly levels”. Undo anyway?");
   expect(api.undo).toHaveBeenNthCalledWith(1, 'c1', 'm1', null, false);
-  expect(api.undo).toHaveBeenNthCalledWith(2, 'c1', 'm1', ['b'], true);
+  expect(api.undo).toHaveBeenNthCalledWith(2, 'c1', 'm1', ['M/A.json', 'M/A/drawing-x.svg', 'M/W.json'], true);
   expect(useClaude.getState().chat?.messages).toHaveLength(1);
 
   api.undo.mockClear();
@@ -146,6 +158,129 @@ test('undo with conflicts asks, retries with force on only those paths, and not 
   api.undo.mockResolvedValue({ undone: [], conflicts: ['b'] });
   await useClaude.getState().undo('m1', ['b']);
   expect(api.undo).toHaveBeenCalledTimes(1);
+});
+
+test("undo doesn't take the owner back to its chat when they opened another one meanwhile", async () => {
+  useClaude.setState({ chat: chatOf('c1') });
+  const undone = later<UndoResult>();
+  api.undo.mockReturnValue(undone.promise);
+  api.readChat.mockImplementation(async (id: string) => chatOf(id, [reply('m1')]));
+  const undoing = useClaude.getState().undo('m1', null);
+  await vi.waitFor(() => expect(api.undo).toHaveBeenCalled());
+  await useClaude.getState().openChat('c2');
+  undone.resolve({ undone: ['a'], conflicts: [] });
+  await undoing;
+  expect(useClaude.getState().chat?.id).toBe('c2');
+
+  // Still on the same chat, the undo shows what's saved now.
+  api.undo.mockResolvedValue({ undone: ['a'], conflicts: [] });
+  await useClaude.getState().undo('m1', null);
+  expect(useClaude.getState().chat).toEqual(chatOf('c2', [reply('m1')]));
+});
+
+test('openChat is refused while a message is being sent, as while Claude answers in another chat', async () => {
+  useClaude.setState({ chat: chatOf('c1'), sending: true });
+  api.readChat.mockResolvedValue(chatOf('c9'));
+  await useClaude.getState().openChat('c9');
+  await useClaude.getState().openChat(null);
+  expect(useClaude.getState().chat?.id).toBe('c1');
+  expect(api.readChat).not.toHaveBeenCalled();
+});
+
+test("a chat read after the owner moved on isn't shown", async () => {
+  const reads: Record<string, (chat: Chat) => void> = {};
+  api.readChat.mockImplementation((id: string) => new Promise((r) => (reads[id] = r)));
+
+  // Two chats chosen one after the other: the later one shows, whichever is read first.
+  const a = useClaude.getState().openChat('a');
+  const b = useClaude.getState().openChat('b');
+  reads.b(chatOf('b'));
+  reads.a(chatOf('a'));
+  await Promise.all([a, b]);
+  expect(useClaude.getState().chat?.id).toBe('b');
+
+  // New chat, after choosing one.
+  const c = useClaude.getState().openChat('c');
+  await useClaude.getState().openChat(null);
+  reads.c(chatOf('c'));
+  await c;
+  expect(useClaude.getState().chat).toBeNull();
+
+  // A message sent while a chat was being read: the chat it went to stays.
+  const d = useClaude.getState().openChat('d');
+  await useClaude.getState().send('hi', null);
+  reads.d(chatOf('d'));
+  await d;
+  expect(useClaude.getState().chat?.id).toBe('c1');
+});
+
+test('reset lists the chats without checking the CLI, which waits for the panel to open', async () => {
+  useClaude.setState({ chats: [summary('old')] });
+  api.listChats.mockResolvedValue([summary('new')]);
+  useClaude.getState().reset();
+  expect(useClaude.getState().chats).toEqual([]);
+  await vi.waitFor(() => expect(useClaude.getState().chats).toEqual([summary('new')]));
+  expect(api.status).not.toHaveBeenCalled();
+});
+
+test("answers about the last workspace are dropped once a reset comes between: its chats, its status, a reply's list", async () => {
+  // A refresh started before the reset asks again, for the workspace open now.
+  const oldList = later<ChatSummary[]>();
+  const oldStatus = later<ClaudeStatus>();
+  api.listChats.mockReturnValueOnce(oldList.promise);
+  api.status.mockReturnValueOnce(oldStatus.promise);
+  const refreshed = useClaude.getState().refresh();
+  api.listChats.mockResolvedValue([summary('new')]);
+  useClaude.getState().reset();
+  oldList.resolve([summary('old')]);
+  oldStatus.resolve({ state: 'error', message: 'This workspace was closed.' });
+  await refreshed;
+  expect(useClaude.getState()).toMatchObject({ chats: [summary('new')], status: { state: 'ready' } });
+
+  // A reset's own list, overtaken by a later reset.
+  const firstList = later<ChatSummary[]>();
+  api.listChats.mockReturnValueOnce(firstList.promise);
+  useClaude.getState().reset();
+  api.listChats.mockResolvedValue([summary('newer')]);
+  useClaude.getState().reset();
+  await vi.waitFor(() => expect(useClaude.getState().chats).toEqual([summary('newer')]));
+  firstList.resolve([summary('new')]);
+  await firstList.promise;
+  expect(useClaude.getState().chats).toEqual([summary('newer')]);
+
+  // The list read after a reply.
+  await useClaude.getState().send('go', null);
+  const afterReply = later<ChatSummary[]>();
+  api.listChats.mockClear();
+  api.listChats.mockReturnValueOnce(afterReply.promise);
+  handler({ chatId: 'c1', messageId: 'm1', kind: 'done', message: reply('m1') });
+  await vi.waitFor(() => expect(api.listChats).toHaveBeenCalledTimes(1));
+  api.listChats.mockResolvedValue([summary('newest')]);
+  useClaude.getState().reset();
+  afterReply.resolve([summary('c1')]);
+  await vi.waitFor(() => expect(useClaude.getState().chats).toEqual([summary('newest')]));
+  await afterReply.promise;
+  expect(useClaude.getState().chats).toEqual([summary('newest')]);
+});
+
+test("a send answered after a reset doesn't bring the last workspace's chat or error into the new one", async () => {
+  const answer = later<{ chatId: string; messageId: string } | { error: string }>();
+  api.send.mockReturnValue(answer.promise);
+  const sent = useClaude.getState().send('hi', 'p1');
+  await vi.waitFor(() => expect(api.send).toHaveBeenCalled());
+  useClaude.getState().reset();
+  answer.resolve({ chatId: 'c1', messageId: 'm1' });
+  await sent;
+  expect(useClaude.getState()).toMatchObject({ chat: null, running: null, sending: false, error: null });
+
+  const failed = later<{ chatId: string; messageId: string } | { error: string }>();
+  api.send.mockReturnValue(failed.promise);
+  const again = useClaude.getState().send('hi', 'p1');
+  await vi.waitFor(() => expect(api.send).toHaveBeenCalledTimes(2));
+  useClaude.getState().reset();
+  failed.resolve({ error: 'Claude is busy' });
+  await again;
+  expect(useClaude.getState()).toMatchObject({ chat: null, running: null, sending: false, error: null });
 });
 
 test('undo saves first, so words typed just before it reach the disk before the files are restored', async () => {

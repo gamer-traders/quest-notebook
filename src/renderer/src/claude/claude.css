@@ -221,7 +221,9 @@
   font-size: 13px;
 }
 
-.claude-setup {
+/* In place of the chat: what to do about the CLI, or a chat that couldn't be drawn. */
+.claude-setup,
+.claude-failed {
   display: grid;
   justify-items: start;
   gap: 12px;
@@ -229,7 +231,8 @@
   line-height: 1.5;
 }
 
-.claude-setup p {
+.claude-setup p,
+.claude-failed p {
   margin: 0;
 }
 
@@ -802,6 +805,12 @@
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.claude-too-long {
+  margin: 0;
+  color: var(--down);
+  font-size: 12px;
 }
 
 /*

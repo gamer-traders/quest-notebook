@@ -1,6 +1,22 @@
 import { expect, test } from 'vitest';
 import type { ChatMessage, FileChange } from '@shared/ipc';
-import { atQuery, changeVerb, errorText, isClaudeShortcut, isWebUrl, pagePathFor, referenceLabel, relativeDate, undoablePaths, withoutQuery } from './panel';
+import {
+  MAX_MESSAGE,
+  atQuery,
+  changeVerb,
+  changedTitles,
+  conflictQuestion,
+  drawableMessage,
+  errorText,
+  isClaudeShortcut,
+  isTooLong,
+  isWebUrl,
+  pagePathFor,
+  referenceLabel,
+  relativeDate,
+  undoablePaths,
+  withoutQuery,
+} from './panel';
 
 test('an @ at the start or after a space opens the picker with what follows it, up to the caret', () => {
   expect(atQuery('@wee', 4)).toEqual({ start: 0, query: 'wee' });
@@ -87,6 +103,87 @@ test('changed lines say what happened, and which are still undoable', () => {
   const message: ChatMessage = { id: 'm', role: 'assistant', text: '', created: 'c', changes: [change('a.json', 'edited'), change('b.json', 'created')], undone: ['a.json'] };
   expect(undoablePaths(message)).toEqual(['b.json']);
   expect(undoablePaths({ ...message, changes: undefined })).toEqual([]);
+});
+
+test("a page the reply's changes didn't reach isn't undoable: the file holds the owner's words", () => {
+  const onPage = (path: string, pageId: string, drawing = false): FileChange => ({ ...change(path, 'edited', drawing), pageId });
+  const message: ChatMessage = {
+    id: 'm',
+    role: 'assistant',
+    text: '',
+    created: 'c',
+    changes: [onPage('M/A.json', 'a'), onPage('M/A/drawing-x.svg', 'a', true), onPage('M/B.json', 'b'), change('M/Bad.json', 'edited')],
+  };
+  expect(undoablePaths(message, ['a'])).toEqual(['M/B.json', 'M/Bad.json']);
+  expect(undoablePaths(message, [])).toEqual(['M/A.json', 'M/A/drawing-x.svg', 'M/B.json', 'M/Bad.json']);
+});
+
+test('the undo question names the pages that changed since the reply, each once', () => {
+  const message: ChatMessage = {
+    id: 'm',
+    role: 'assistant',
+    text: '',
+    created: 'c',
+    changes: [
+      { ...change('M/A.json', 'edited'), pageId: 'a' },
+      { ...change('M/A/drawing-x.svg', 'edited', true), pageId: 'a' },
+      { ...change('M/B.json', 'created'), pageId: 'b' },
+      { ...change('M/Gone.json', 'edited'), pageId: 'gone' },
+    ],
+  };
+  const titleOf = (id: string) => ({ a: 'Support and resistance', b: 'Weekly levels' })[id] ?? null;
+  expect(changedTitles(message, ['M/A.json', 'M/A/drawing-x.svg'], titleOf)).toEqual(['Support and resistance']);
+  // A page no longer in the notebook, or a path the reply didn't list, goes by its path.
+  expect(changedTitles(message, ['M/B.json', 'M/Gone.json', 'M/Other.json'], titleOf)).toEqual(['Weekly levels', 'M/Gone.json', 'M/Other.json']);
+  expect(changedTitles(undefined, ['M/A.json'], titleOf)).toEqual(['M/A.json']);
+
+  expect(conflictQuestion(['Weekly levels'])).toBe("This page changed since Claude's reply: “Weekly levels”. Undo anyway?");
+  expect(conflictQuestion(['Support and resistance', 'Weekly levels'])).toBe("These pages changed since Claude's reply: “Support and resistance”, “Weekly levels”. Undo anyway?");
+});
+
+test('a message is too long to send past 100,000 characters, as main counts them', () => {
+  expect(MAX_MESSAGE).toBe(100_000);
+  expect(isTooLong('x'.repeat(100_000))).toBe(false);
+  expect(isTooLong('x'.repeat(100_001))).toBe(true);
+  expect(isTooLong('')).toBe(false);
+});
+
+test('a damaged message is drawn from what can be drawn, and the rest is left out', () => {
+  const odd = {
+    id: 'm',
+    role: 'assistant',
+    text: { not: 'text' },
+    created: 7,
+    references: 'nope',
+    actions: { verb: 'read' },
+    changes: 'x',
+    undone: 3,
+    error: { message: 'boom' },
+  } as unknown as ChatMessage;
+  expect(drawableMessage(odd)).toEqual({ id: 'm', role: 'assistant', text: '', created: '', references: [], actions: [], changes: [], undone: [] });
+
+  const mixed = {
+    id: 'm',
+    role: 'user',
+    text: 'hi',
+    created: 'c',
+    references: [null, { kind: 'page', pageId: 'a', title: 'A' }, { kind: 'selection', pageId: 'a', title: 'A' }, { kind: 'page', pageId: 'b', title: 5 }],
+    actions: [{ verb: 'read', path: 'M/A.json' }, 'read', { verb: 'searched', detail: ['x'] }, { verb: 'edited', path: { p: 1 } }],
+    changes: [{ path: 'M/A.json', pageId: 'a', kind: 'edited', drawing: false, before: null, after: null }, { path: 9 }, null, { path: 'M/B.json', pageId: 4 }],
+    undone: ['M/A.json', 2, null],
+    error: 'Usage limit reached',
+  } as unknown as ChatMessage;
+  expect(drawableMessage(mixed)).toEqual({
+    id: 'm',
+    role: 'user',
+    text: 'hi',
+    created: 'c',
+    references: [{ kind: 'page', pageId: 'a', title: 'A' }],
+    actions: [{ verb: 'read', path: 'M/A.json' }],
+    changes: [{ path: 'M/A.json', pageId: 'a', kind: 'edited', drawing: false, before: null, after: null }],
+    undone: ['M/A.json'],
+    error: 'Usage limit reached',
+  });
 });
 
 test('a reference chip names the page, or where the passage came from', () => {

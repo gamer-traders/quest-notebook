@@ -76,10 +76,66 @@ export function changeVerb(change: FileChange): 'Edited' | 'Created' | 'Drew in'
   return change.kind === 'created' ? 'Created' : 'Edited';
 }
 
-/** The paths a reply changed that haven't been undone yet. */
-export function undoablePaths(message: ChatMessage): string[] {
+/**
+ * The paths a reply changed that haven't been undone yet. Pages in `notApplied` are left out: the reply's changes
+ * didn't reach them, so their files hold the owner's own words, which an undo would put back to before the reply.
+ */
+export function undoablePaths(message: ChatMessage, notApplied: readonly string[] = []): string[] {
   const undone = message.undone ?? [];
-  return (message.changes ?? []).filter((c) => !undone.includes(c.path)).map((c) => c.path);
+  const reached = (c: FileChange) => c.pageId === undefined || !notApplied.includes(c.pageId);
+  return (message.changes ?? []).filter((c) => !undone.includes(c.path) && reached(c)).map((c) => c.path);
+}
+
+/** The pages behind some changed paths, by title and each once: a page and its drawings are one page. A path whose page isn't known goes by itself. */
+export function changedTitles(message: ChatMessage | undefined, paths: string[], titleOf: (pageId: string) => string | null): string[] {
+  const changes = Array.isArray(message?.changes) ? message.changes : [];
+  const titles = new Map<string, string>();
+  for (const path of paths) {
+    const pageId = changes.find((c) => c.path === path)?.pageId;
+    const title = pageId ? titleOf(pageId) : null;
+    const key = title === null ? `path:${path}` : `page:${pageId}`;
+    if (!titles.has(key)) titles.set(key, title ?? path);
+  }
+  return [...titles.values()];
+}
+
+/** Asked before an undo puts back pages written to since Claude's reply. */
+export function conflictQuestion(titles: string[]): string {
+  const names = titles.map((t) => `“${t}”`).join(', ');
+  return `${titles.length === 1 ? 'This page' : 'These pages'} changed since Claude's reply: ${names}. Undo anyway?`;
+}
+
+/** Main refuses a longer message, so the box doesn't send one. Counted as main counts it, in UTF-16 units. */
+export const MAX_MESSAGE = 100_000;
+
+export const isTooLong = (text: string): boolean => text.length > MAX_MESSAGE;
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const isText = (v: unknown): v is string => typeof v === 'string';
+const isTextOrNone = (v: unknown) => v === undefined || isText(v);
+const kept = <T>(list: unknown, keep: (item: unknown) => boolean): T[] => (Array.isArray(list) ? (list.filter(keep) as T[]) : []);
+
+const isReference = (r: unknown) => isRecord(r) && isText(r.pageId) && isText(r.title) && (r.kind === 'page' || (r.kind === 'selection' && isText(r.text)));
+const isAction = (a: unknown) => isRecord(a) && isText(a.verb) && isTextOrNone(a.id) && isTextOrNone(a.path) && isTextOrNone(a.detail);
+const isChange = (c: unknown) => isRecord(c) && isText(c.path) && isTextOrNone(c.pageId);
+
+/**
+ * A saved message as the panel can draw it. A damaged chat file can hold anything, such as a list that isn't one
+ * or an error that isn't words: what can't be drawn is left out, so one bad message doesn't take the panel with it.
+ */
+export function drawableMessage(message: ChatMessage): ChatMessage {
+  const m = message as unknown as Record<string, unknown>;
+  return {
+    id: String(m.id),
+    role: m.role === 'user' ? 'user' : 'assistant',
+    text: isText(m.text) ? m.text : '',
+    created: isText(m.created) ? m.created : '',
+    references: kept(m.references, isReference),
+    actions: kept(m.actions, isAction),
+    changes: kept(m.changes, isChange),
+    undone: kept(m.undone, isText),
+    ...(isText(m.error) ? { error: m.error } : {}),
+  };
 }
 
 /** A reference as its chip says it: the page's title, or where a passage came from. */

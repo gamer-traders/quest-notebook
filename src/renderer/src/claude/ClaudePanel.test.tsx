@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { Chat, ChatMessage, ClaudeEvent, QuestApi } from '@shared/ipc';
 import { useStore } from '../store';
 import type { Notebook } from '../types';
-import { ClaudePanel } from './ClaudePanel';
+import { ChatBoundary, ClaudePanel } from './ClaudePanel';
 import { bindClaude, useClaude } from './store';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -151,11 +151,11 @@ test('changed lines open their page and undo one by one or all together; undone 
       { path: W, pageId: 'w', kind: 'created', drawing: false, before: null, after: '{}' },
     ],
   };
-  useClaude.setState({ chat: chat([reply]), notApplied: { m1: ['a'] } });
+  useClaude.setState({ chat: chat([reply]) });
   await render();
   expect([...host.querySelectorAll('.claude-actions li')].map((li) => li.textContent)).toEqual(['Read Support and resistance', 'Searched for “gold” (refused)']);
   expect([...host.querySelectorAll('.claude-change')].map((l) => l.textContent)).toEqual(['Edited Support and resistance', 'Created Weekly levels']);
-  expect(host.textContent).toContain('not applied: you were editing this page');
+  expect(host.textContent).not.toContain('not applied');
   expect(button('Undo all')).toBeDefined();
 
   await click(host.querySelectorAll('.claude-change')[1]);
@@ -163,11 +163,148 @@ test('changed lines open their page and undo one by one or all together; undone 
 
   await click(host.querySelector('.claude-undo'));
   expect(api.undo).toHaveBeenCalledWith('c1', 'm1', [A], false);
+  await click(button('Undo all'));
+  expect(api.undo).toHaveBeenLastCalledWith('c1', 'm1', null, false);
 
   await act(async () => useClaude.setState({ chat: chat([{ ...reply, undone: [A] }]) }));
   expect(host.querySelector('.is-undone .claude-change')?.textContent).toContain('Edited Support and resistance');
   expect(host.querySelectorAll('.claude-undo')).toHaveLength(1);
   expect(button('Undo all')).toBeUndefined();
+});
+
+test("a page the reply's changes didn't reach has no Undo, and Undo all leaves it out, so the owner's words stay", async () => {
+  const WD = 'Markets/Weekly levels/drawing-1.svg';
+  const reply: ChatMessage = {
+    id: 'm1',
+    role: 'assistant',
+    text: 'Done.',
+    created: 'c',
+    changes: [
+      { path: A, pageId: 'a', kind: 'edited', drawing: false, before: '{}', after: '{}' },
+      { path: W, pageId: 'w', kind: 'edited', drawing: false, before: '{}', after: '{}' },
+      { path: WD, pageId: 'w', kind: 'created', drawing: true, before: null, after: '<svg/>' },
+    ],
+  };
+  useClaude.setState({ chat: chat([reply]), notApplied: { m1: ['a'] } });
+  await render();
+  const lines = [...host.querySelectorAll('.claude-changes li')];
+  expect(lines.map((li) => [li.querySelector('.claude-change')?.textContent, !!li.querySelector('.claude-undo'), li.querySelector('.claude-not-applied')?.textContent ?? null])).toEqual([
+    ['Edited Support and resistance', false, 'not applied: you were editing this page'],
+    ['Edited Weekly levels', true, null],
+    ['Drew in Weekly levels', true, null],
+  ]);
+  await click(button('Undo all'));
+  expect(api.undo).toHaveBeenCalledWith('c1', 'm1', [W, WD], false);
+
+  // With one change left to undo, there's nothing for Undo all to do.
+  await act(async () => useClaude.setState({ chat: chat([{ ...reply, undone: [WD] }]) }));
+  expect(host.querySelectorAll('.claude-undo')).toHaveLength(1);
+  expect(button('Undo all')).toBeUndefined();
+});
+
+test('a message with damaged fields is drawn from what can be, without breaking the panel', async () => {
+  const user = { id: 'u1', role: 'user', text: { not: 'words' }, created: 'c', references: { kind: 'page' } } as unknown as ChatMessage;
+  const odd = { id: 'm1', role: 'assistant', text: 'Done.', created: 'c', references: 'x', actions: { verb: 'read' }, changes: 'nope', undone: 7, error: { message: 'boom' } } as unknown as ChatMessage;
+  // An "undone" that's words, not a list, would otherwise match any path it holds a piece of.
+  const half = {
+    id: 'm2',
+    role: 'assistant',
+    text: 42,
+    created: 'c',
+    actions: [{ verb: 'read', path: A }, null, { verb: 'read', path: { not: 'a path' } }],
+    changes: [{ path: A, pageId: 'a', kind: 'edited', drawing: false, before: '{}', after: '{}' }, null, { path: 5 }],
+    undone: A,
+    error: 'Usage limit reached',
+  } as unknown as ChatMessage;
+  useClaude.setState({ chat: chat([user, odd, half]) });
+  await render();
+  expect(host.querySelector('.claude-failed')).toBeNull();
+  expect(host.querySelectorAll('.claude-msg')).toHaveLength(3);
+  expect(host.querySelector('.is-user .claude-plain')?.textContent).toBe('');
+  expect([...host.querySelectorAll('.claude-md')].map((m) => m.textContent)).toEqual(['Done.']);
+  expect([...host.querySelectorAll('.claude-actions li')].map((li) => li.textContent)).toEqual(['Read Support and resistance']);
+  expect([...host.querySelectorAll('.claude-msg-error')].map((p) => p.textContent)).toEqual(['Usage limit reached']);
+  expect([...host.querySelectorAll('.claude-change')].map((l) => l.textContent)).toEqual(['Edited Support and resistance']);
+  expect(host.querySelectorAll('.claude-undo')).toHaveLength(1);
+});
+
+test("a chat that can't be drawn says so in place of the chat, with New chat, and the header still works", async () => {
+  const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+  useClaude.setState({ chat: { ...chat([]), messages: 'not a list' } as unknown as Chat });
+  await render();
+  expect(host.querySelector('.claude-failed p')?.textContent).toBe("This chat couldn't be shown.");
+  expect(host.querySelector('.claude-title')?.textContent).toBe('Levels');
+  expect(host.querySelector('textarea')).toBeNull();
+  await click(host.querySelector('.claude-failed button'));
+  expect(useClaude.getState().chat).toBeNull();
+  expect(host.querySelector('.claude-failed')).toBeNull();
+  expect(host.querySelectorAll('.claude-quick-send')).toHaveLength(4);
+  errors.mockRestore();
+});
+
+test('the boundary catches a thrown child, and tries again when the chat changes or New chat is pressed', async () => {
+  const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+  let broken = true;
+  const Child = () => {
+    if (broken) throw new Error('bad chat');
+    return <p className="fine">fine</p>;
+  };
+  const onNewChat = vi.fn();
+  const one = chat([]);
+  const draw = (c: Chat | null) => act(async () => root.render(<ChatBoundary chat={c} onNewChat={onNewChat}><Child /></ChatBoundary>));
+  await draw(one);
+  expect(host.querySelector('.claude-failed p')?.textContent).toBe("This chat couldn't be shown.");
+  // The same chat drawn again still can't be.
+  await draw(one);
+  expect(host.querySelector('.fine')).toBeNull();
+
+  broken = false;
+  await draw({ ...one, messages: [] });
+  expect(host.querySelector('.fine')).not.toBeNull();
+
+  broken = true;
+  await draw(one);
+  broken = false;
+  await click(host.querySelector('.claude-failed button'));
+  expect(onNewChat).toHaveBeenCalledTimes(1);
+  expect(host.querySelector('.fine')).not.toBeNull();
+  errors.mockRestore();
+});
+
+test('while a message is on its way, no other chat can be chosen', async () => {
+  // The list as the panel reads it when it opens.
+  api.listChats.mockResolvedValue([
+    { id: 'c1', title: 'Levels', updated: 'u' },
+    { id: 'c2', title: 'Other', updated: 'v' },
+  ]);
+  useClaude.setState({ chat: chat([]) });
+  await render();
+  await act(async () => useClaude.setState({ sending: true }));
+  await click(button('Chats ▾'));
+  expect([...host.querySelectorAll<HTMLButtonElement>('.claude-chat-open')].map((b) => b.disabled)).toEqual([true, true]);
+  await act(async () => useClaude.setState({ sending: false }));
+  expect([...host.querySelectorAll<HTMLButtonElement>('.claude-chat-open')].map((b) => b.disabled)).toEqual([false, false]);
+});
+
+test('opening the panel looks for the CLI and lists the chats', async () => {
+  await render();
+  expect(api.status).toHaveBeenCalledTimes(1);
+  expect(api.listChats).toHaveBeenCalledTimes(1);
+});
+
+test("a message over 100,000 characters can't be sent, and the box says so", async () => {
+  await render();
+  await type('x'.repeat(100_001));
+  expect(button('Send')?.disabled).toBe(true);
+  expect(host.querySelector('.claude-too-long')?.textContent).toBe('Too long to send');
+  expect(input().getAttribute('aria-describedby')).toBe(host.querySelector('.claude-too-long')?.id);
+  await press('Enter');
+  expect(api.send).not.toHaveBeenCalled();
+
+  await type('x'.repeat(100_000));
+  expect(button('Send')?.disabled).toBe(false);
+  expect(host.querySelector('.claude-too-long')).toBeNull();
+  expect(input().hasAttribute('aria-describedby')).toBe(false);
 });
 
 test('a streamed reply is drawn once a frame, as plain text, with Stop and Send disabled', async () => {

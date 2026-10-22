@@ -3,7 +3,7 @@ import type { ChatReference } from '@shared/ipc';
 import { useStore } from '../store';
 import { displayTitle } from '../page/tree';
 import { linkChoiceLabel, linkChoicePath, linkChoices, type LinkChoice } from '../editor/linkItems';
-import { atQuery, referenceLabel, withoutQuery } from './panel';
+import { atQuery, isTooLong, referenceLabel, withoutQuery } from './panel';
 import { useClaude } from './store';
 
 type PageChoice = Extract<LinkChoice, { kind: 'notebook' }>;
@@ -119,7 +119,8 @@ export function Composer({ ref, openPageId }: { ref?: Ref<ComposerHandle>; openP
   }, [pickerOpen, active, listId]);
 
   const busy = running || sending;
-  const canSend = !busy && text.trim() !== '';
+  const tooLong = isTooLong(text);
+  const canSend = !busy && !tooLong && text.trim() !== '';
 
   const submit = async () => {
     if (!canSend) return;
@@ -197,6 +198,7 @@ export function Composer({ ref, openPageId }: { ref?: Ref<ComposerHandle>; openP
           aria-autocomplete="list"
           aria-controls={pickerOpen ? listId : undefined}
           aria-activedescendant={pickerOpen ? optionId(active) : undefined}
+          aria-describedby={tooLong ? `${listId}-long` : undefined}
           onChange={(e) => onEdit(e.target.value, e.target.selectionStart)}
           onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
           onKeyDown={onKeyDown}
@@ -236,6 +238,11 @@ export function Composer({ ref, openPageId }: { ref?: Ref<ComposerHandle>; openP
           </button>
         </div>
       </div>
+      {tooLong && (
+        <p id={`${listId}-long`} className="claude-too-long">
+          Too long to send
+        </p>
+      )}
     </div>
   );
 }

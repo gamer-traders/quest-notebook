@@ -688,7 +688,7 @@ button.twisty:hover {
   text-align: left;
 }
 
-.move-list button:hover {
+.move-list button:hover:not(:disabled) {
   background: var(--chart-grid);
 }
 
@@ -702,6 +702,11 @@ button.twisty:hover {
 
 .move-empty {
   padding: 12px;
+}
+
+.move-locked {
+  margin: 0;
+  font-size: 13px;
 }
 
 /* Settings: its sections on the left, the current one's choices on the right. */

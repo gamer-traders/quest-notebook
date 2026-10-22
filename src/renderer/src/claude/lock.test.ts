@@ -9,6 +9,8 @@ import { useStore } from '../store';
 import type { Notebook } from '../types';
 import type { PageBlock } from '../page/blockTypes';
 import { NotebookView } from '../components/NotebookView';
+import { ReviewView } from '../components/ReviewView';
+import { UnreadablePage } from '../components/UnreadablePage';
 import { bindClaude, isLocked, useClaude, useLocked } from './store';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -130,6 +132,21 @@ describe('the open page', () => {
     expect(shown()).toEqual(unlocked);
   });
 
+  test("a page holding the one Claude is working on can't be deleted, since its sub-pages go with it", async () => {
+    const child: Notebook = { ...page, id: 'b', title: 'Monday', parentId: 'a', blocks: [], items: {} };
+    act(() => useStore.setState({ notebooks: [page, child] }));
+    const remove = () => [...host.querySelectorAll<HTMLButtonElement>('.notebook-meta button')].find((b) => b.textContent?.startsWith('Delete page'))!;
+    expect(remove().textContent).toBe('Delete page and 1 sub-page');
+    expect(remove().disabled).toBe(false);
+    await lockedOn('b');
+    expect(remove().disabled).toBe(true);
+    expect(shown()).toEqual(unlocked);
+    await lockedOn('a');
+    expect(remove().disabled).toBe(true);
+    await lockedOn(null);
+    expect(remove().disabled).toBe(false);
+  });
+
   const select = (from: number, to: number) =>
     act(async () => {
       const view = (host.querySelector('.ProseMirror') as unknown as { editor: { view: EditorView } }).editor.view;
@@ -152,5 +169,69 @@ describe('the open page', () => {
     expect(toolbar().length === 1).toBe(locked);
     await act(async () => ask()!.click());
     expect(useClaude.getState()).toMatchObject({ open: true, attachments: [{ kind: 'selection', pageId: 'a', title: 'Levels', text: 'world' }] });
+  });
+});
+
+describe('other views of the page', () => {
+  let host: HTMLElement;
+  let root: Root;
+
+  beforeEach(() => {
+    host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  const block = (id: string, type: string) => ({ id, type, props: { itemId: '' }, children: [] });
+  // A chart of the owner's own candles, so nothing is fetched, with a prediction under it.
+  const chart = { id: 'c1', type: 'chart', symbol: 'MINE', interval: '1d', asOf: 100, revealed: false, practice: false, levels: [], trends: [], pins: [], source: 'custom', candles: [] };
+  const call = { id: 'k1', type: 'call', direction: 'up', bars: 5, reason: '' };
+  const page = (id: string): Notebook => ({
+    id,
+    title: id.toUpperCase(),
+    spaceId: 's',
+    parentId: null,
+    position: 0,
+    createdAt: 0,
+    updatedAt: 0,
+    blocks: [block(`${id}-c`, 'chart'), block(`${id}-k`, 'prediction')] as unknown as PageBlock[],
+    items: { [`${id}-c`]: { ...chart, id: `${id}-c` }, [`${id}-k`]: { ...call, id: `${id}-k` } } as Notebook['items'],
+  });
+  const lockOn = (pageId: string | null) => act(() => useClaude.setState({ running: pageId === null ? null : turn(pageId) }));
+
+  test("Review won't reveal a chart on the page Claude is working on until the turn ends", async () => {
+    useStore.setState({ notebooks: [page('a'), page('b')], spaces: [{ id: 's', name: 'S' }], view: 'review' });
+    await act(async () => root.render(createElement(ReviewView)));
+    const reveal = (title: string) =>
+      [...host.querySelectorAll('tbody tr')].find((tr) => tr.textContent?.includes(title))!.querySelector<HTMLButtonElement>('.row-actions button')!;
+    const revealed = (id: string) => (useStore.getState().notebooks.find((n) => n.id === id)!.items[`${id}-c`] as { revealed: boolean }).revealed;
+
+    expect([reveal('A').disabled, reveal('B').disabled]).toEqual([false, false]);
+    lockOn('a');
+    expect([reveal('A').textContent, reveal('A').disabled, reveal('B').disabled]).toEqual(['Reveal', true, false]);
+    await act(async () => reveal('A').click());
+    expect(revealed('a')).toBe(false);
+
+    lockOn(null);
+    expect(reveal('A').disabled).toBe(false);
+    await act(async () => reveal('A').click());
+    expect(revealed('a')).toBe(true);
+  });
+
+  test("an unreadable page Claude's turn started on can't be moved to the Trash until the turn ends", async () => {
+    const bad: Notebook = { ...page('a'), blocks: [], items: {}, path: 'S/A.json', loadError: 'Unexpected token' };
+    useStore.setState({ notebooks: [bad], spaces: [{ id: 's', name: 'S' }] });
+    await act(async () => root.render(createElement(UnreadablePage, { page: bad })));
+    const trash = () => [...host.querySelectorAll('button')].find((b) => b.textContent === 'Move to the Trash…')!;
+    expect(trash().disabled).toBe(false);
+    lockOn('a');
+    expect(trash().disabled).toBe(true);
+    lockOn(null);
+    expect(trash().disabled).toBe(false);
   });
 });

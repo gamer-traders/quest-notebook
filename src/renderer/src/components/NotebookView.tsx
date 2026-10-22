@@ -6,7 +6,7 @@ import { useStore } from '../store';
 import { NotebookEditor } from '../editor/NotebookEditor';
 import { toggleClaude } from '../claude/ClaudePanel';
 import { claudeShortcutLabel } from '../claude/panel';
-import { useClaude, useLocked } from '../claude/store';
+import { useClaude, useHoldsLock, useLocked } from '../claude/store';
 import { IS_MAC } from './SettingsDialog';
 import { Backlinks } from './Backlinks';
 import { PagePath } from './PagePath';
@@ -26,6 +26,8 @@ export function NotebookView() {
   const claudeOpen = useClaude((s) => s.open);
   // Claude is working on this page: it reads, scrolls and follows links, but takes no edits until the turn ends.
   const locked = useLocked(nb?.id);
+  // Nor is it deleted, nor a page above it, which would take it along.
+  const holdsLock = useHoldsLock(nb?.id);
   const titleRef = useRef<HTMLInputElement>(null);
 
   // A page just made from the sidebar or the panel opens with its title ready to type.
@@ -107,7 +109,7 @@ export function NotebookView() {
           </button>
           <button
             className="quiet danger"
-            disabled={locked}
+            disabled={holdsLock}
             onClick={() => {
               const { notebooks } = useStore.getState();
               if (window.confirm(deletePageQuestion(displayTitle(nb.title), descendantIds(notebooks, nb.id).length))) deletePage(nb.id);

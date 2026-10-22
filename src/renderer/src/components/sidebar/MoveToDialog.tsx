@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Notebook, Space } from '../../types';
 import { childrenOf, displayTitle, pathOf, type Target } from '../../page/tree';
 import { useStore } from '../../store';
+import { isLocked, useClaude, useLocked } from '../../claude/store';
 
 export interface Choice {
   key: string;
@@ -48,6 +49,8 @@ export function MoveToDialog({ pageId, onClose }: { pageId: string; onClose: () 
   const notebooks = useStore((s) => s.notebooks);
   const spaces = useStore((s) => s.spaces);
   const page = notebooks.find((nb) => nb.id === pageId);
+  // A turn that started on the page after the dialog opened: it stays where it is until the reply ends.
+  const locked = useLocked(pageId);
   const [query, setQuery] = useState('');
   const dialog = useRef<HTMLDialogElement>(null);
 
@@ -60,6 +63,7 @@ export function MoveToDialog({ pageId, onClose }: { pageId: string; onClose: () 
   const shown = matchingChoices(choices, query);
 
   const pick = (choice: Choice) => {
+    if (isLocked(useClaude.getState(), pageId)) return;
     useStore.getState().movePage(pageId, choice.target);
     onClose();
   };
@@ -92,6 +96,7 @@ export function MoveToDialog({ pageId, onClose }: { pageId: string; onClose: () 
             }
           }}
         />
+        {locked && <p className="muted move-locked">Claude is working on this page. It can move once the reply ends.</p>}
       </div>
       {shown.length === 0 ? (
         <p className="muted move-empty">Nothing matches “{query}”.</p>
@@ -99,7 +104,7 @@ export function MoveToDialog({ pageId, onClose }: { pageId: string; onClose: () 
         <ul className="move-list">
           {shown.map((c) => (
             <li key={c.key}>
-              <button onClick={() => pick(c)}>
+              <button disabled={locked} onClick={() => pick(c)}>
                 {c.path.length > 1 && <span className="move-where">{c.path.slice(0, -1).join(' / ')} / </span>}
                 <span className={c.path.length === 1 ? 'move-space' : undefined}>{c.path.at(-1)}</span>
               </button>

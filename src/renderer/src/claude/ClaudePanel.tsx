@@ -1,6 +1,19 @@
 import './claude.css';
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type RefObject } from 'react';
-import type { ChatReference, ClaudeStatus } from '@shared/ipc';
+import {
+  Component,
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type PointerEvent,
+  type ReactNode,
+  type RefObject,
+} from 'react';
+import type { Chat, ChatReference, ClaudeStatus } from '@shared/ipc';
 import { useStore } from '../store';
 import { IS_MAC } from '../components/SettingsDialog';
 import { Composer, focusPage, type ComposerHandle } from './Composer';
@@ -50,6 +63,7 @@ function ChatsMenu() {
   const chats = useClaude((s) => s.chats);
   const current = useClaude((s) => s.chat?.id ?? null);
   const runningChat = useClaude((s) => s.running?.chatId ?? null);
+  const sending = useClaude((s) => s.sending);
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
@@ -117,8 +131,8 @@ function ChatsMenu() {
                       type="button"
                       className="claude-chat-open"
                       aria-current={c.id === current ? 'true' : undefined}
-                      // While Claude answers, only its own chat can be shown.
-                      disabled={runningChat !== null && c.id !== runningChat}
+                      // While Claude answers, only its own chat can be shown; while a message is on its way, none other.
+                      disabled={sending || (runningChat !== null && c.id !== runningChat)}
                       onClick={() => choose(c.id)}
                     >
                       <span className="claude-chat-title">{title}</span>
@@ -146,7 +160,8 @@ function ChatsMenu() {
 }
 
 function Header({ ready, onNewChat }: { ready: boolean; onNewChat: () => void }) {
-  const title = useClaude((s) => s.chat?.title.trim() || 'New chat');
+  // A damaged chat file's title may not be words.
+  const title = useClaude((s) => (typeof s.chat?.title === 'string' && s.chat.title.trim()) || 'New chat');
   const busy = useClaude((s) => s.running !== null || s.sending);
   const shown = ready ? title : 'Claude';
   return (
@@ -291,6 +306,44 @@ const Conversation = memo(function Conversation({ composer }: { composer: RefObj
   );
 });
 
+interface BoundaryProps {
+  /** The chat on screen. Another one, or the same one read again, is tried afresh. */
+  chat: Chat | null;
+  onNewChat: () => void;
+  children: ReactNode;
+}
+
+/** A chat that can't be drawn says so, in place of the chat, instead of taking the window with it. */
+export class ChatBoundary extends Component<BoundaryProps, { failed: boolean; chat: Chat | null }> {
+  state = { failed: false, chat: this.props.chat };
+
+  static getDerivedStateFromProps(props: BoundaryProps, state: { chat: Chat | null }) {
+    return props.chat === state.chat ? null : { failed: false, chat: props.chat };
+  }
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="claude-failed" role="alert">
+        <p>This chat couldn't be shown.</p>
+        <button
+          type="button"
+          onClick={() => {
+            this.props.onNewChat();
+            this.setState({ failed: false });
+          }}
+        >
+          New chat
+        </button>
+      </div>
+    );
+  }
+}
+
 const clampWidth = (w: number) => Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(w)));
 
 /**
@@ -299,6 +352,7 @@ const clampWidth = (w: number) => Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.r
  */
 export function ClaudePanel() {
   const status = useClaude((s) => s.status);
+  const chat = useClaude((s) => s.chat);
   const storedWidth = useClaude((s) => s.width);
   const [dragWidth, setDragWidth] = useState<number | null>(null);
   const drag = useRef<{ x: number; from: number; to: number | null } | null>(null);
@@ -307,7 +361,7 @@ export function ClaudePanel() {
   const width = dragWidth ?? storedWidth;
   const ready = status?.state === 'ready';
 
-  // Each opening looks for the CLI again and reads the chat list.
+  // Each opening looks for the CLI again and reads the chat list. A workspace loading only reads the list.
   useEffect(() => report(useClaude.getState().refresh()), []);
 
   // Once the check has answered, the caret goes to the message box, or to Check again.
@@ -376,7 +430,9 @@ export function ClaudePanel() {
       {status === null ? (
         <p className="claude-checking">Checking…</p>
       ) : ready ? (
-        <Conversation composer={composer} />
+        <ChatBoundary chat={chat} onNewChat={newChat}>
+          <Conversation composer={composer} />
+        </ChatBoundary>
       ) : (
         <Setup status={status} />
       )}

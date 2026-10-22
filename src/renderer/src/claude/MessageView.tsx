@@ -5,7 +5,7 @@ import type { ChatAction, ChatMessage, FileChange } from '@shared/ipc';
 import { useStore } from '../store';
 import { displayTitle } from '../page/tree';
 import { actionLabel } from './labels';
-import { changeVerb, errorText, isWebUrl, pagePathFor, referenceLabel, undoablePaths } from './panel';
+import { changeVerb, drawableMessage, errorText, isWebUrl, pagePathFor, referenceLabel, undoablePaths } from './panel';
 import { useClaude } from './store';
 
 /** Shows a call to main that failed, above the message box. */
@@ -124,17 +124,21 @@ interface ChangesProps {
   busy: boolean;
 }
 
-/** The pages and drawings a reply changed, each with Undo, and Undo all. */
-function ChangedLines({ message, pages, notApplied, busy }: ChangesProps) {
+/**
+ * The pages and drawings a reply changed, each with Undo, and Undo all. A page the changes didn't reach has
+ * no Undo: its file holds what the owner wrote, which an undo would put back to before the reply.
+ */
+function ChangedLines({ message, pages, notApplied = [], busy }: ChangesProps) {
   const changes = message.changes ?? [];
   if (changes.length === 0) return null;
   const undone = message.undone ?? [];
+  const undoable = undoablePaths(message, notApplied);
   const undo = (paths: string[] | null) => report(useClaude.getState().undo(message.id, paths));
 
   const line = (c: FileChange) => {
     const title = (c.pageId && pages.titleOf(c.pageId)) || c.path;
     const isUndone = undone.includes(c.path);
-    const skipped = c.pageId !== undefined && (notApplied?.includes(c.pageId) ?? false);
+    const skipped = c.pageId !== undefined && notApplied.includes(c.pageId);
     return (
       <li key={c.path} className={isUndone ? 'is-undone' : undefined}>
         <PageLine pageId={c.pageId && pages.titleOf(c.pageId) !== null ? c.pageId : null} className="claude-change">
@@ -142,7 +146,7 @@ function ChangedLines({ message, pages, notApplied, busy }: ChangesProps) {
           {isUndone && <span className="sr-only"> (undone)</span>}
         </PageLine>
         {skipped && <span className="claude-not-applied">not applied: you were editing this page</span>}
-        {!isUndone && (
+        {!isUndone && !skipped && (
           <button type="button" className="quiet claude-undo" disabled={busy} aria-label={`Undo: ${changeVerb(c)} ${title}`} onClick={() => undo([c.path])}>
             Undo
           </button>
@@ -151,12 +155,14 @@ function ChangedLines({ message, pages, notApplied, busy }: ChangesProps) {
     );
   };
 
+  // With every change reached, all of them: main works out which are left.
+  const all = undoable.length === undoablePaths(message).length ? null : undoable;
   return (
     <div className="claude-changes">
       <p className="claude-changes-head">Changed:</p>
       <ul>{changes.map(line)}</ul>
-      {undoablePaths(message).length >= 2 && (
-        <button type="button" className="quiet claude-undo-all" disabled={busy} onClick={() => undo(null)}>
+      {undoable.length >= 2 && (
+        <button type="button" className="quiet claude-undo-all" disabled={busy} onClick={() => undo(all)}>
           Undo all
         </button>
       )}
@@ -186,7 +192,9 @@ interface MessageProps {
 }
 
 /** One message: the owner's on a highlighter tint, Claude's on paper, with what it did and changed. */
-export const MessageView = memo(function MessageView({ message, pages, notApplied, busy }: MessageProps) {
+export const MessageView = memo(function MessageView({ message: saved, pages, notApplied, busy }: MessageProps) {
+  // Read from a file that may be damaged: only what can be drawn is.
+  const message = drawableMessage(saved);
   if (message.role === 'user') {
     return (
       <li className="claude-msg is-user">
