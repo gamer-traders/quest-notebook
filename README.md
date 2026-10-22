@@ -45,6 +45,8 @@ Press **Cmd+J**, or click **Claude** in a page's header, to open a chat with Cla
   - The open page is attached to each message. Remove its chip to leave it out.
   - Type `@` to attach other pages.
   - Select text in a page and choose **Ask Claude** to quote it.
+  - Right-click a block, or use its ⋮⋮ menu, and choose **Ask Claude about this block**. Claude gets that block exactly as it's written in the page file, so it can change just that block.
+  - Paste or drop images (PNG, JPEG, GIF or WebP, up to 10 per message, 5 MB each) into the message box. Claude sees them, as in Claude Code, and they're kept with the chat.
 - **What Claude can do:**
   - It reads the whole workspace.
   - It edits and creates pages and drawings in your spaces, and changes show up at once.
