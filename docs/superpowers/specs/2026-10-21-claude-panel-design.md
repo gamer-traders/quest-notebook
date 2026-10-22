@@ -79,7 +79,7 @@ The workspace was designed to be clear to an AI: plain JSON pages, drawings as S
 - Several Claude turns running at once. One turn runs at a time per workspace.
 - Shell commands, web access and MCP servers for Claude.
 - Inline autocomplete or ghost text in the editor.
-- Sending images. Claude reads drawings as their SVG files.
+- ~~Sending images.~~ Added on 22 Oct at the owner's request: see "Images and blocks" below. Claude still reads drawings as their SVG files.
 - Grading predictions against Binance prices. Claude has no market data beyond what's in the files.
 
 ## Anti-goals: failure even if it technically works
@@ -100,13 +100,15 @@ The workspace was designed to be clear to an AI: plain JSON pages, drawings as S
 - **Invocation, per turn:**
 
   ```
-  claude -p --output-format stream-json --verbose --include-partial-messages
+  claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages
          [--resume <session-id>] --restricted --strict-mcp-config
          --tools Read,Glob,Grep,Edit,Write --permission-mode default
          --allowedTools Read Glob Grep "Edit(/*/**/*.json)" "Edit(/*/**/drawing-*.svg)"
          --disallowedTools "Edit(/.quest/**)"
-         --append-system-prompt <workspace guide> -- <message>
+         --append-system-prompt <workspace guide>
   ```
+
+  The message goes on standard input as one JSON line: any pasted images, then the text. Standard input is then closed.
 
   (Settled by the first experiment; see "Changed while building". The first draft used `--permission-mode acceptEdits`, which leaked.)
 
@@ -185,7 +187,7 @@ What the experiments, reviews and the live check changed in the design above:
 - **Permissions:**
   - Default permission mode with command-line allow and deny rules, never `acceptEdits`. In the experiment, `acceptEdits` with a deny-rules settings file let Claude write the README, `.quest/workspace.json` and a top-level file. The default mode refuses anything not allowed.
   - `--strict-mcp-config` keeps the account's claude.ai connectors out.
-  - The message goes last, after `--`, because a message starting with `-` was read as an option.
+  - The message goes on standard input (`--input-format stream-json`), not on the command line. That way it can carry images, and a message starting with `-` can't be read as an option.
 - **Environment:** besides `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN`, the CLI's environment drops `ANTHROPIC_BASE_URL` and every `CLAUDE*` variable except `CLAUDE_CONFIG_DIR`. An app started from inside Claude Code inherits variables that would put the CLI in bare mode or send it through a proxy. `PATH` starts with the folder `claude` was found in, so an npm-installed CLI finds `node`.
 - **New spaces:** the allow rules can't tell an existing space folder from a new one, so Claude can create a page in a new top-level folder, which becomes a new space. The app records it, and undo removes that folder too when it's left empty. A space that existed before the turn is never removed.
 - **What a reply records:**
@@ -201,3 +203,14 @@ What the experiments, reviews and the live check changed in the design above:
 - **Undo** saves the window's pending edits first, so a word typed just before Undo is seen as a change and Undo asks.
 - **While Claude works on a page,** its Delete button is disabled too.
 - **Quick actions** send at once. A pencil button beside each puts the text in the message box to edit first.
+
+## Images and blocks (added 22 Oct 2026, at the owner's request)
+
+- **Images, "like in Claude Code":**
+  - Paste (Cmd+V) or drop images into the message box. PNG, JPEG, GIF or WebP, at most 10 per message and 5 MB each.
+  - Claude sees them directly, as image content in the message, and they're kept with the chat in `.quest/chats/images/<chat id>-<id>.<ext>`.
+  - The chat shows them as thumbnails; click one to enlarge it.
+  - Deleting a chat moves its images to the Trash too.
+- **Blocks:**
+  - Right-click a block, or use its ⋮⋮ menu, and choose **Ask Claude about this block**. With several blocks selected, it's "these N blocks".
+  - The block is attached as a chip. Claude gets its exact content as written in the page file, and where it sits on the page ("block 4 of 12"), so it can talk about that block or change it.
