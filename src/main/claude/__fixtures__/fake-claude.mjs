@@ -1,8 +1,10 @@
 /*
   A stand-in for the claude CLI, for tests only: run as `node fake-claude.mjs <claude arguments>`.
-  `--version` and `auth status` answer like the real CLI. A turn picks what to do from the prompt (the argument
-  after `--`), writes into its working directory like Claude would, and prints recorded stream-json lines with
-  the recorded workspace root (/WS) replaced by its own working directory.
+  `--version` and `auth status` answer like the real CLI. A turn needs `--input-format stream-json`, and reads its
+  message from stdin as the real CLI does: the first line, a stream-json user message, once stdin is closed. It
+  picks what to do from the prompt (the message's text block), writes into its working directory like Claude would,
+  and prints recorded stream-json lines with the recorded workspace root (/WS) replaced by its own working directory.
+  A message it can't read is an error on stderr, exit 1.
 
   Prompt words:
     (none of these)  edits Markets/A.json, creates Markets/A/drawing-x1.svg, prints read-and-edit.jsonl
@@ -27,7 +29,9 @@
     "lost session"   with --resume: "No conversation found" on stderr, exit 1
 
   Environment:
-    FAKE_LOG=<file>       a turn first writes { argv, envKeys, path } there (keep it outside the workspace)
+    FAKE_LOG=<file>       a turn first writes { argv, envKeys, path, prompt, images } there (keep it outside the
+                          workspace); `prompt` is the text block, `images` is [{ type, bytes }] for each image block
+    FAKE_EXIT_AT_ONCE=1   a turn exits with code 3 at once, before reading stdin
     FAKE_LOGGED_OUT=1     `auth status` says loggedIn: false
     FAKE_AUTH_BROKEN=1    `auth status` prints something that isn't JSON
     FAKE_GO=<file>        a "hold" turn finishes once this file exists
@@ -71,9 +75,22 @@ function editPages() {
   writeFileSync(join(process.cwd(), 'Markets/A/drawing-x1.svg'), DRAWING);
 }
 
-function turn() {
-  const at = args.indexOf('--');
-  const prompt = at >= 0 ? (args[at + 1] ?? '') : '';
+/** The prompt and the images of the stream-json user message on the first line of stdin; null when it isn't one. */
+function readMessage(input) {
+  try {
+    const content = JSON.parse(input.split('\n')[0]).message.content;
+    const text = content.find((block) => block.type === 'text');
+    if (typeof text?.text !== 'string') return null;
+    const images = content
+      .filter((block) => block.type === 'image')
+      .map((block) => ({ type: block.source.media_type, bytes: Buffer.from(block.source.data, 'base64').length }));
+    return { prompt: text.text, images };
+  } catch {
+    return null;
+  }
+}
+
+function turn({ prompt, images }) {
   const cwd = process.cwd();
   const init = fixture('read-and-edit.jsonl')[0];
   const sessionId = JSON.parse(init).session_id;
@@ -97,7 +114,7 @@ function turn() {
     else if (prompt.includes('noisy')) process.on('SIGTERM', () => print([delta('late text'), success('late text')], () => process.exit(143)));
   }
 
-  const log = { argv: args, envKeys: Object.keys(process.env), path: process.env.PATH ?? '' };
+  const log = { argv: args, envKeys: Object.keys(process.env), path: process.env.PATH ?? '', prompt, images };
   const writeLog = (extra = {}) => {
     if (process.env.FAKE_LOG) writeFileSync(process.env.FAKE_LOG, JSON.stringify({ ...log, ...extra }));
   };
@@ -222,6 +239,19 @@ if (args[0] === '--version') {
 } else if (args[0] === 'auth' && args[1] === 'status') {
   if (process.env.FAKE_AUTH_BROKEN === '1') print(['Something went wrong']);
   else print([JSON.stringify({ loggedIn: process.env.FAKE_LOGGED_OUT !== '1', authMethod: process.env.FAKE_LOGGED_OUT === '1' ? 'none' : 'claude.ai' })]);
+} else if (process.env.FAKE_EXIT_AT_ONCE === '1') {
+  process.exit(3);
+} else if (!args.includes('--input-format') || args[args.indexOf('--input-format') + 1] !== 'stream-json') {
+  process.stderr.write('fake-claude: expected --input-format stream-json\n');
+  process.exitCode = 1;
 } else {
-  turn();
+  let input = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (chunk) => (input += chunk));
+  process.stdin.on('end', () => {
+    const message = readMessage(input);
+    if (message) return turn(message);
+    process.stderr.write('fake-claude: stdin did not hold a stream-json user message\n');
+    process.exitCode = 1;
+  });
 }

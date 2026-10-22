@@ -4,6 +4,7 @@ import type { Chat, ChatAction, ChatMessage, ChatReference, ChatSummary, FileCha
 import { formatJson } from '@shared/formatJson';
 import { insideRoot, writeFileAtomic } from '../workspace/paths';
 import { isSessionId } from './command';
+import { parseChatImage, trashImages } from './images';
 
 export const CHATS_DIR = '.quest/chats';
 
@@ -15,12 +16,20 @@ export const newChatId = (): string => Array.from({ length: 8 }, () => ALPHABET[
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isString = (v: unknown): v is string => typeof v === 'string';
 const VERBS: readonly unknown[] = ['read', 'edited', 'created', 'searched', 'other'] satisfies ChatAction['verb'][];
+/** The longest a block reference's blocks and its `where` may be. */
+const MAX_BLOCK_TEXT = 50_000;
+const MAX_BLOCK_WHERE = 200;
+
+const isStringUpTo = (v: unknown, max: number): v is string => isString(v) && v.length <= max;
 
 /** A reference as the window sends it or a chat file keeps it, rebuilt with only its own fields; null when anything is off. */
 export function parseReference(v: unknown): ChatReference | null {
   if (!isObject(v) || !isString(v.pageId) || !isString(v.title)) return null;
   if (v.kind === 'page') return { kind: 'page', pageId: v.pageId, title: v.title };
   if (v.kind === 'selection' && isString(v.text)) return { kind: 'selection', pageId: v.pageId, title: v.title, text: v.text };
+  if (v.kind === 'block' && isStringUpTo(v.text, MAX_BLOCK_TEXT) && isStringUpTo(v.where, MAX_BLOCK_WHERE)) {
+    return { kind: 'block', pageId: v.pageId, title: v.title, text: v.text, where: v.where };
+  }
   return null;
 }
 
@@ -61,11 +70,13 @@ function keepList<T>(message: Record<string, unknown>, key: string, parse: (v: u
 
 /**
  * A message from a chat file, which can be damaged or edited by hand: what the window and undo read is cleaned up, and
- * any field (or list item) that isn't well-formed is dropped, so it never reaches them.
+ * any field (or list item) that isn't well-formed is dropped, so it never reaches them. An image is kept only under a
+ * name of this chat's.
  */
-function cleanMessage(m: Record<string, unknown>): ChatMessage {
+function cleanMessage(m: Record<string, unknown>, chatId: string): ChatMessage {
   const message = { ...m };
   keepList(message, 'references', parseReference);
+  keepList(message, 'images', (v) => parseChatImage(v, chatId));
   keepList(message, 'actions', parseAction);
   keepList(message, 'changes', parseFileChange);
   keepList(message, 'undone', (v) => (isString(v) ? v : null));
@@ -77,13 +88,13 @@ function cleanMessage(m: Record<string, unknown>): ChatMessage {
 function parseChat(v: unknown): Chat | null {
   if (!isObject(v)) return null;
   const { id, title, created, updated, sessionId, messages } = v;
-  if (![id, title, created, updated].every(isString)) return null;
+  if (!isString(id) || ![title, created, updated].every(isString)) return null;
   // The session id goes on the CLI's command line: anything but a UUID is refused.
   if (sessionId !== null && !isSessionId(sessionId)) return null;
   if (!Array.isArray(messages)) return null;
   const isMessage = (m: unknown): m is Record<string, unknown> => isObject(m) && isString(m.id) && (m.role === 'user' || m.role === 'assistant') && isString(m.text);
   if (!messages.every(isMessage)) return null;
-  return { ...(v as unknown as Chat), messages: messages.map(cleanMessage) };
+  return { ...(v as unknown as Chat), messages: messages.map((m) => cleanMessage(m, id)) };
 }
 
 const chatPath = (root: string, id: string) => insideRoot(root, `${CHATS_DIR}/${id}.json`);
@@ -124,11 +135,15 @@ export async function writeChat(root: string, chat: Chat): Promise<void> {
   await writeFileAtomic(abs, formatJson(chat));
 }
 
-/** Moves the chat's file to the Trash. An invalid id, or a chat that isn't there, does nothing. */
+/**
+ * Moves the chat's file to the Trash, then its images, even when the file is already gone (so a delete that failed half
+ * way can be done again). An invalid id does nothing.
+ */
 export async function deleteChat(root: string, id: string, trash: (abs: string) => Promise<void>): Promise<void> {
   if (!ID.test(id)) return;
   const abs = chatPath(root, id);
   if (await stat(abs).then(() => true, () => false)) await trash(abs);
+  await trashImages(root, id, trash);
 }
 
 /** A chat's title from its first message: the first non-empty line, cut to 60 characters. */

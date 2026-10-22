@@ -12,14 +12,16 @@ import {
   type ClaudeEvent,
   type ClaudeStatus,
   type FileChange,
+  type ImageData,
   type SendRequest,
   type UndoResult,
 } from '@shared/ipc';
 import type { RepairedFile, WorkspaceSession } from '../workspace/session';
 import { chatTitle, deleteChat, listChats, newChatId, parseReference, readChat, writeChat } from './chats';
-import { buildPrompt, claudeArgs, claudeEnv, isSessionId } from './command';
+import { buildPrompt, claudeArgs, claudeEnv, isSessionId, userMessageLine } from './command';
 import { LineSplitter, parseStreamLine, type StreamItem } from './events';
 import { WORKSPACE_GUIDE } from './guide';
+import { BAD_REQUEST, parseImages, readImage, saveImages } from './images';
 import { TurnChanges, repairChanges } from './turns';
 import { undoChanges } from './undo';
 
@@ -44,6 +46,8 @@ const CLOSED = 'This workspace is closed';
 const CLOSED_MID_TURN = 'Stopped: the workspace was closed';
 const NOT_FOUND = "Couldn't find Claude Code";
 const TOO_LONG = 'That message is too long';
+/** What Claude reads for a message of images only. */
+const IMAGES_ONLY = '(see the image)';
 /** The CLI no longer has the session a chat would resume. */
 const LOST_SESSION = /no conversation found|session.*not found/i;
 const MAX_MESSAGE = 100_000;
@@ -129,23 +133,32 @@ function isUndoable(change: unknown): change is FileChange {
 }
 
 /**
- * A send request from the window, checked field by field and rebuilt with only the known fields; null when anything is
- * off. A message too long is the service's to refuse, so the window can say why.
+ * A send request from the window, checked field by field and rebuilt with only the known fields; or why it can't be
+ * sent: what's wrong with its images, or "Bad request" for anything else. The message may be blank only when there's an
+ * image. A message too long is the service's to refuse, so the window can say why.
  */
-export function parseSendRequest(v: unknown): SendRequest | null {
-  if (!isObject(v)) return null;
+export function parseSendRequest(v: unknown): SendRequest | { error: string } {
+  const bad = { error: BAD_REQUEST };
+  if (!isObject(v)) return bad;
   const { chatId, message, references, openPageId } = v;
-  if (chatId !== null && !isString(chatId)) return null;
-  if (openPageId !== null && !isString(openPageId)) return null;
-  if (!isString(message) || message.trim() === '') return null;
-  if (!Array.isArray(references)) return null;
+  if (chatId !== null && !isString(chatId)) return bad;
+  if (openPageId !== null && !isString(openPageId)) return bad;
+  if (!isString(message)) return bad;
+  if (!Array.isArray(references)) return bad;
   const refs: ChatReference[] = [];
   for (const ref of references) {
     const parsed = parseReference(ref);
-    if (!parsed) return null;
+    if (!parsed) return bad;
     refs.push(parsed);
   }
-  return { chatId, message, references: refs, openPageId };
+  let images: ImageData[] = [];
+  if (v.images !== undefined) {
+    const parsed = parseImages(v.images);
+    if (!Array.isArray(parsed)) return parsed;
+    images = parsed;
+  }
+  if (message.trim() === '' && images.length === 0) return bad;
+  return { chatId, message, references: refs, openPageId, ...(images.length ? { images } : {}) };
 }
 
 /** Undo's arguments from the window, or null when any has the wrong type. */
@@ -238,7 +251,12 @@ export class ClaudeService {
       const realRoot = await realpath(this.root);
       if (this.closed) return { error: CLOSED };
 
-      chat.messages.push({ id: randomUUID(), role: 'user', text: req.message, created: now, references });
+      const images = req.images ?? [];
+      const saved = await saveImages(this.root, chat.id, images);
+      if (this.closed) return { error: CLOSED };
+      const message: ChatMessage = { id: randomUUID(), role: 'user', text: req.message, created: now, references };
+      if (saved.length) message.images = saved;
+      chat.messages.push(message);
       chat.updated = now;
       await writeChat(this.root, chat);
       // Whatever changed on disk before the turn (an undo, an edit in another app) isn't Claude's.
@@ -273,7 +291,8 @@ export class ClaudeService {
       };
       this.turn = turn;
       started = true;
-      this.start(turn, claudePath, prompt);
+      // The images go to Claude as they came, not read back from their files.
+      this.start(turn, claudePath, userMessageLine(prompt, images));
       if (this.stopRequested) this.stopTurn(turn);
       return { chatId: chat.id, messageId: turn.messageId };
     } catch (error) {
@@ -288,11 +307,15 @@ export class ClaudeService {
     }
   }
 
-  /** The references the message keeps (the open page first; unknown pages dropped), and the prompt for the CLI. */
+  /**
+   * The references the message keeps (the open page first; unknown pages dropped), and the prompt for the CLI. A message
+   * of images only reads "(see the image)".
+   */
   private prompt(req: SendRequest): { references: ChatReference[]; prompt: string } {
     const references: ChatReference[] = [];
     const pages: { title: string; path: string }[] = [];
     const listed = new Set<string>();
+    const blocks: { title: string; path: string; where: string; text: string }[] = [];
     const selections: { title: string; text: string }[] = [];
     const open = req.openPageId === null ? undefined : this.session.pageInfo(req.openPageId);
     if (open && req.openPageId !== null) {
@@ -306,21 +329,25 @@ export class ClaudeService {
         if (listed.has(ref.pageId)) continue;
         listed.add(ref.pageId);
         pages.push(info);
+      } else if (ref.kind === 'block') {
+        blocks.push({ title: info.title, path: info.path, where: ref.where, text: ref.text });
       } else {
         selections.push({ title: info.title, text: ref.text });
       }
       references.push(ref);
     }
-    return { references, prompt: buildPrompt({ message: req.message, openPage: open ?? null, references: pages, selections }) };
+    const message = req.message.trim() === '' && req.images?.length ? IMAGES_ONLY : req.message;
+    return { references, prompt: buildPrompt({ message, openPage: open ?? null, references: pages, blocks, selections }) };
   }
 
-  private start(turn: Turn, claudePath: string, prompt: string): void {
+  /** Starts the child, and gives it the turn's message (`input`, one stream-json line) on stdin. */
+  private start(turn: Turn, claudePath: string, input: string): void {
     let child: ChildProcess;
     try {
-      child = this.deps.spawn(claudePath, claudeArgs({ prompt, sessionId: turn.chat.sessionId, guide: WORKSPACE_GUIDE }), {
+      child = this.deps.spawn(claudePath, claudeArgs({ sessionId: turn.chat.sessionId, guide: WORKSPACE_GUIDE }), {
         cwd: this.root,
         env: this.env(claudePath),
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['pipe', 'pipe', 'pipe'],
       });
     } catch (error) {
       this.forget(claudePath);
@@ -338,7 +365,9 @@ export class ClaudeService {
     child.stderr?.on('data', (chunk: string) => {
       turn.stderr = (turn.stderr + chunk).slice(-STDERR_KEEP);
     });
-    // A broken pipe mustn't take the app down: the child's close still ends the turn.
+    // A broken pipe mustn't take the app down: the child's close still ends the turn. That includes stdin, when the
+    // child is gone (or never started) before it has read the message.
+    child.stdin?.on('error', () => {});
     child.stdout?.on('error', () => {});
     child.stderr?.on('error', () => {});
     child.on('error', (error) => {
@@ -357,6 +386,8 @@ export class ClaudeService {
       }, this.deps.exitGraceMs ?? 2000);
     });
     child.on('close', (code, signal) => void this.end(turn, { code, signal }));
+    // The CLI starts on the message once stdin is closed.
+    child.stdin?.end(input);
   }
 
   private line(turn: Turn, line: string): void {
@@ -763,7 +794,12 @@ export class ClaudeService {
     return readChat(this.root, id);
   }
 
-  /** Moves a chat to the Trash, unless Claude is answering in it. */
+  /** An image saved with one of a chat's messages, by its file name; null when it's gone or the name isn't that chat's. */
+  image(chatId: string, file: string): Promise<ImageData | null> {
+    return readImage(this.root, chatId, file);
+  }
+
+  /** Moves a chat and its images to the Trash, unless Claude is answering in it. */
   async deleteChat(id: string): Promise<void> {
     if (this.closed) throw new Error(CLOSED);
     if (id === this.activeChatId) throw new Error('Claude is answering in this chat');

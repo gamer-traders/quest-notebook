@@ -290,3 +290,18 @@ The built app, started with `ANTHROPIC_API_KEY=sk-ant-invalid-live-check` in its
 | `claude` not findable (empty HOME, bare PATH) | the panel shows the install message |
 
 The logged-out state was not checked live; that needs logging out.
+
+## Stream-json input, for images (22 Oct 2026)
+
+Checked live on 2.1.288 by the controller, then adopted for every turn. It replaces "the prompt goes last,
+after `--`" and "spawn with stdin ignored" above.
+
+- `claude -p --input-format stream-json <the same flags, no -- and no prompt>`, given ONE line on stdin and then
+  stdin closed, runs the turn. The line is a user message, images first, then the text:
+  `{"type":"user","message":{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"<b64>"}},{"type":"text","text":"…"}]}}`
+- Claude saw the image (a red PNG: it answered "Red.").
+- The output stream is unchanged, and the user message is not echoed back.
+- A second turn with `--resume <id>` and stream-json input remembered the image.
+- The app (`command.ts`, `userMessageLine`) sends every turn this way, with or without images, so no text of the
+  owner's is ever on the command line. It spawns with stdin `pipe`, writes the line, and ends stdin; a child that is
+  gone before it reads (EPIPE) just ends the turn as usual.

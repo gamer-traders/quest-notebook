@@ -10,10 +10,10 @@ export function insideRoot(root: string, rel: string): string {
   return abs;
 }
 
-/** Writes beside the file, then renames over it, so a reader never sees half a file. */
-export async function writeFileAtomic(abs: string, text: string): Promise<void> {
+/** Writes beside the file, then renames over it, so a reader never sees half a file. Text is written as UTF-8. */
+export async function writeFileAtomic(abs: string, content: string | Uint8Array): Promise<void> {
   const tmp = `${abs}.tmp`;
-  await writeFile(tmp, text, 'utf8');
+  await writeFile(tmp, content, typeof content === 'string' ? 'utf8' : undefined);
   await rename(tmp, abs);
 }
 

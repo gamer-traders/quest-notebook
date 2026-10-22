@@ -35,7 +35,7 @@ export function registerIpc(workspaces: Workspaces, getWindow: () => BrowserWind
   ipcMain.handle('claude:status', () => workspaces.claude?.status() ?? { state: 'error', message: 'No workspace is open' });
   ipcMain.handle('claude:send', (_e, req: unknown) => {
     const parsed = parseSendRequest(req);
-    if (!parsed) return { error: 'Bad request' };
+    if ('error' in parsed) return parsed;
     return workspaces.claude?.send(parsed) ?? { error: 'No workspace is open' };
   });
   ipcMain.handle('claude:stop', () => workspaces.claude?.stop());
@@ -46,6 +46,9 @@ export function registerIpc(workspaces: Workspaces, getWindow: () => BrowserWind
     if (!workspaces.claude) throw new Error('No workspace is open');
     await workspaces.claude.deleteChat(id);
   });
+  ipcMain.handle('claude:image', (_e, chatId: unknown, file: unknown) =>
+    typeof chatId === 'string' && typeof file === 'string' ? (workspaces.claude?.image(chatId, file) ?? null) : null,
+  );
   ipcMain.handle('claude:undo', async (_e, ...args: unknown[]) => {
     const parsed = parseUndoArgs(args);
     if (!parsed) throw new Error('Bad request');

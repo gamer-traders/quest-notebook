@@ -4,10 +4,12 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile 
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
-import type { ChatAction, ChatMessage, ClaudeEvent, DiskDelta, SendRequest } from '@shared/ipc';
+import type { ChatAction, ChatMessage, ClaudeEvent, DiskDelta, ImageType, SendRequest } from '@shared/ipc';
 import { WorkspaceSession } from '../workspace/session';
+import { imageBytes, testImage } from './__fixtures__/image-bytes';
 import { CHATS_DIR, readChat, writeChat } from './chats';
 import { buildPrompt } from './command';
+import { IMAGES_DIR } from './images';
 import { ClaudeService, parseSendRequest, parseUndoArgs } from './service';
 
 const FIXTURES = join(__dirname, '__fixtures__');
@@ -180,7 +182,9 @@ const doneOf = (s: Setup, messageId: string): Promise<ChatMessage> =>
 
 /** The fake has written its log, so its signal handlers are in place. */
 const fakeReady = (s: Setup) => waitFor('the fake to start', () => exists(s.log));
-const fakeLog = async (s: Setup): Promise<{ argv: string[]; envKeys: string[]; path: string }> => JSON.parse(await readFile(s.log, 'utf8'));
+/** What the fake was given: its arguments, environment names and PATH, and the message it read on stdin. */
+const fakeLog = async (s: Setup): Promise<{ argv: string[]; envKeys: string[]; path: string; prompt: string; images: { type: ImageType; bytes: number }[] }> =>
+  JSON.parse(await readFile(s.log, 'utf8'));
 
 const withoutId = ({ id: _id, ...rest }: ChatAction) => rest;
 const actionEvents = (s: Setup, messageId: string) => s.events.flatMap((e) => (e.kind === 'action' && e.messageId === messageId ? [e.action] : []));
@@ -238,12 +242,13 @@ describe('a turn', () => {
     expect(typeof chat?.messages[0].id).toBe('string');
     expect(chat?.messages[1]).toEqual(message);
 
-    const { argv } = await fakeLog(s);
-    expect(argv[argv.length - 1]).toBe(
+    const { prompt } = await fakeLog(s);
+    expect(prompt).toBe(
       buildPrompt({
         message: 'Tidy this page',
         openPage: { title: 'A', path: 'Markets/A.json' },
         references: [{ title: 'Bee', path: 'Markets/B.json' }],
+        blocks: [],
         selections: [{ title: 'A', text: 'one\ntwo' }],
       }),
     );
@@ -259,12 +264,13 @@ describe('a turn', () => {
     ];
     const { chatId, messageId } = await sendOk(s, 'Compare these', { references });
     await doneOf(s, messageId);
-    const { argv } = await fakeLog(s);
-    expect(argv[argv.length - 1]).toBe(
+    const { prompt } = await fakeLog(s);
+    expect(prompt).toBe(
       buildPrompt({
         message: 'Compare these',
         openPage: null,
         references: [],
+        blocks: [],
         selections: [
           { title: 'A', text: 'one' },
           { title: 'Bee', text: 'bee text' },
@@ -282,9 +288,9 @@ describe('a turn', () => {
     const references = [{ kind: 'selection' as const, pageId: 'c', title: 'Untitled', text: 'waves' }];
     const { chatId, messageId } = await sendOk(s, 'Look at this', { openPageId: 'c', references });
     await doneOf(s, messageId);
-    const { argv } = await fakeLog(s);
-    expect(argv[argv.length - 1]).toBe(
-      buildPrompt({ message: 'Look at this', openPage: { title: 'Sea', path: 'Markets/C.json' }, references: [], selections: [{ title: 'Sea', text: 'waves' }] }),
+    const { prompt } = await fakeLog(s);
+    expect(prompt).toBe(
+      buildPrompt({ message: 'Look at this', openPage: { title: 'Sea', path: 'Markets/C.json' }, references: [], blocks: [], selections: [{ title: 'Sea', text: 'waves' }] }),
     );
     expect((await readChat(s.root, chatId))?.messages[0].references).toEqual([{ kind: 'page', pageId: 'c', title: 'Sea' }, references[0]]);
   });
@@ -359,6 +365,126 @@ describe('a turn', () => {
     expect(path.startsWith(`${FIXTURES}${delimiter}`)).toBe(true);
     expect(argv[0]).toBe('-p');
     expect(argv).not.toContain('acceptEdits');
+  });
+});
+
+describe('the message on stdin', () => {
+  test('goes in as stream-json, and never on the command line', async () => {
+    const s = await setup();
+    const message = '--bare Add a paragraph';
+    const { messageId } = await sendOk(s, message);
+    expect((await doneOf(s, messageId)).error).toBeUndefined();
+    const { argv, prompt, images } = await fakeLog(s);
+    expect(argv.slice(0, 3)).toEqual(['-p', '--input-format', 'stream-json']);
+    expect(argv).not.toContain('--');
+    expect(argv.some((arg) => arg.includes('Add a paragraph'))).toBe(false);
+    expect(prompt).toBe(message);
+    expect(images).toEqual([]);
+  });
+
+  test('a claude that is gone before it reads the message ends the turn with an error, and nothing crashes', async () => {
+    const s = await setup();
+    // The fake exits at once without reading; an image too big for the pipe makes the write fail.
+    withEnv({ FAKE_EXIT_AT_ONCE: '1' });
+    const first = await sendOk(s, 'Look at this', { images: [testImage('image/png', 4 * 1024 * 1024)] });
+    expect((await doneOf(s, first.messageId)).error).toBe('Claude stopped unexpectedly: exit code 3');
+    withEnv({ FAKE_EXIT_AT_ONCE: undefined });
+    const next = await sendOk(s, 'Add a paragraph', { chatId: first.chatId });
+    expect((await doneOf(s, next.messageId)).error).toBeUndefined();
+  });
+});
+
+describe('images', () => {
+  const imageFiles = async (s: Setup) => (await readdir(join(s.root, IMAGES_DIR)).catch(() => [] as string[])).sort();
+
+  test('are saved with the chat, listed on the message in order, and reach Claude as they were', async () => {
+    const s = await setup();
+    const images = [testImage('image/png', 1000), testImage('image/jpeg', 2000), testImage('image/webp', 300), testImage('image/gif', 40)];
+    const { chatId, messageId } = await sendOk(s, 'What is in these?', { images });
+    expect((await doneOf(s, messageId)).error).toBeUndefined();
+
+    expect((await fakeLog(s)).images).toEqual([
+      { type: 'image/png', bytes: 1000 },
+      { type: 'image/jpeg', bytes: 2000 },
+      { type: 'image/webp', bytes: 300 },
+      { type: 'image/gif', bytes: 40 },
+    ]);
+    const saved = (await readChat(s.root, chatId))?.messages[0].images ?? [];
+    expect(saved.map((i) => i.type)).toEqual(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+    expect(saved.map((i) => i.file.slice(i.file.lastIndexOf('.')))).toEqual(['.png', '.jpg', '.webp', '.gif']);
+    for (const [i, { file }] of saved.entries()) {
+      expect(file).toMatch(new RegExp(`^${chatId}-[a-z0-9]{8}\\.(png|jpg|gif|webp)$`));
+      expect(await readFile(join(s.root, IMAGES_DIR, file))).toEqual(Buffer.from(images[i].data, 'base64'));
+      expect(await s.service.image(chatId, file)).toEqual(images[i]);
+    }
+    expect(await imageFiles(s)).toEqual(saved.map((i) => i.file).sort());
+    // The reply has no images, and a message without any has no list.
+    expect((await readChat(s.root, chatId))?.messages[1].images).toBeUndefined();
+    const next = await sendOk(s, 'Add a paragraph', { chatId });
+    await doneOf(s, next.messageId);
+    expect((await readChat(s.root, chatId))?.messages[2].images).toBeUndefined();
+    expect((await fakeLog(s)).images).toEqual([]);
+  });
+
+  test('a message of images only reaches Claude as "(see the image)", and is kept as it was typed', async () => {
+    const s = await setup();
+    const { chatId, messageId } = await sendOk(s, '  ', { images: [testImage('image/gif')], openPageId: 'a' });
+    await doneOf(s, messageId);
+    expect((await fakeLog(s)).prompt).toBe(buildPrompt({ message: '(see the image)', openPage: { title: 'A', path: 'Markets/A.json' }, references: [], blocks: [], selections: [] }));
+    const chat = await readChat(s.root, chatId);
+    expect(chat?.messages[0]).toMatchObject({ role: 'user', text: '  ', images: [{ type: 'image/gif' }] });
+    expect(chat?.title).toBe('New chat');
+  });
+
+  test("image() reads only this chat's own image files", async () => {
+    const s = await setup();
+    const first = await sendOk(s, 'Look', { images: [testImage('image/png')] });
+    await doneOf(s, first.messageId);
+    const second = await sendOk(s, 'Look again', { images: [testImage('image/jpeg')] });
+    await doneOf(s, second.messageId);
+    const [mine] = (await readChat(s.root, first.chatId))?.messages[0].images ?? [];
+    const [theirs] = (await readChat(s.root, second.chatId))?.messages[0].images ?? [];
+
+    expect(await s.service.image(first.chatId, mine.file)).toEqual({ type: 'image/png', data: imageBytes('image/png').toString('base64') });
+    expect(await s.service.image(first.chatId, theirs.file)).toBeNull();
+    expect(await s.service.image(second.chatId, mine.file)).toBeNull();
+    expect(await s.service.image(first.chatId, `../images/${mine.file}`)).toBeNull();
+    expect(await s.service.image(first.chatId, `${first.chatId}-00000000.png`)).toBeNull();
+    expect(await s.service.image('../chats', mine.file)).toBeNull();
+    expect(await s.service.image(first.chatId, `${first.chatId}.json`)).toBeNull();
+    expect(await s.service.image(first.chatId, '../../Markets/A.json')).toBeNull();
+  });
+
+  test("deleting a chat trashes its images, and leaves other chats' images", async () => {
+    const s = await setup();
+    const first = await sendOk(s, 'Look', { images: [testImage('image/png'), testImage('image/png')] });
+    await doneOf(s, first.messageId);
+    const second = await sendOk(s, 'Look again', { images: [testImage('image/jpeg')] });
+    await doneOf(s, second.messageId);
+    expect(await imageFiles(s)).toHaveLength(3);
+    await s.service.deleteChat(first.chatId);
+    expect((await imageFiles(s)).map((f) => f.slice(0, 8))).toEqual([second.chatId]);
+  });
+});
+
+describe('block references', () => {
+  test('a block whose page is known reaches Claude after the references and before the selections, under its page as it is now, and is kept', async () => {
+    const s = await setup();
+    const block = { kind: 'block' as const, pageId: 'b', title: 'Old title', text: '{\n  "type": "paragraph"\n}', where: 'block 1 of 1' };
+    const lost = { kind: 'block' as const, pageId: 'gone', title: 'Gone', text: '{}', where: 'block 2 of 9' };
+    const selection = { kind: 'selection' as const, pageId: 'a', title: 'A', text: 'one' };
+    const { chatId, messageId } = await sendOk(s, 'Explain', { openPageId: 'a', references: [block, lost, selection] });
+    await doneOf(s, messageId);
+    expect((await fakeLog(s)).prompt).toBe(
+      buildPrompt({
+        message: 'Explain',
+        openPage: { title: 'A', path: 'Markets/A.json' },
+        references: [],
+        blocks: [{ title: 'Bee', path: 'Markets/B.json', where: 'block 1 of 1', text: block.text }],
+        selections: [{ title: 'A', text: 'one' }],
+      }),
+    );
+    expect((await readChat(s.root, chatId))?.messages[0].references).toEqual([{ kind: 'page', pageId: 'a', title: 'A' }, block, selection]);
   });
 });
 
@@ -691,7 +817,7 @@ describe('request checks', () => {
   test('a good send request passes, with only the known fields', () => {
     expect(parseSendRequest(good)).toEqual(good);
     expect(parseSendRequest({ ...good, chatId: 'abcdefgh', openPageId: null, extra: 1 })).toEqual({ ...good, chatId: 'abcdefgh', openPageId: null });
-    expect(parseSendRequest({ ...good, references: [{ kind: 'page', pageId: 'a', title: 'A', text: 'dropped' }] })?.references).toEqual([{ kind: 'page', pageId: 'a', title: 'A' }]);
+    expect(parseSendRequest({ ...good, references: [{ kind: 'page', pageId: 'a', title: 'A', text: 'dropped' }] })).toEqual({ ...good, references: [{ kind: 'page', pageId: 'a', title: 'A' }] });
   });
 
   test('bad send requests are refused', () => {
@@ -708,11 +834,40 @@ describe('request checks', () => {
       { ...good, references: [{ kind: 'selection', pageId: 'a', title: 'A' }] },
       { ...good, references: [{ kind: 'link', pageId: 'a', title: 'A' }] },
       { ...good, references: [null] },
+      { ...good, references: [{ kind: 'block', pageId: 'a', title: 'A', text: '{}' }] },
+      { ...good, images: null },
+      { ...good, images: 'x' },
+      { ...good, images: [{ type: 'image/png' }] },
+      { ...good, images: [{ type: 'image/png', data: 'not base64!' }] },
+      { ...good, message: '', images: [] },
+      { ...good, message: '  ', images: undefined },
+      { ...good, message: 5, images: [testImage('image/png')] },
     ]) {
-      expect(parseSendRequest(bad)).toBeNull();
+      expect(parseSendRequest(bad)).toEqual({ error: 'Bad request' });
     }
     // Length is the service's to refuse, with its own message.
-    expect(parseSendRequest({ ...good, message: 'x'.repeat(100_001) })).not.toBeNull();
+    expect(parseSendRequest({ ...good, message: 'x'.repeat(100_001) })).not.toHaveProperty('error');
+  });
+
+  test('a block reference passes with its own fields', () => {
+    const block = { kind: 'block', pageId: 'a', title: 'A', text: '{ "type": "paragraph" }', where: 'block 2 of 3' };
+    expect(parseSendRequest({ ...good, references: [{ ...block, extra: 1 }] })).toEqual({ ...good, references: [block] });
+  });
+
+  test('images pass, checked, and a message may then be blank', () => {
+    const images = [testImage('image/png'), testImage('image/webp')];
+    expect(parseSendRequest({ ...good, images })).toEqual({ ...good, images });
+    expect(parseSendRequest({ ...good, images: [] })).toEqual(good);
+    expect(parseSendRequest({ ...good, images: undefined })).toEqual(good);
+    expect(parseSendRequest({ ...good, message: '', images })).toEqual({ ...good, message: '', images });
+    expect(parseSendRequest({ ...good, message: ' \n ', images: [images[0]] })).toEqual({ ...good, message: ' \n ', images: [images[0]] });
+  });
+
+  test('images that cannot be sent are refused with why', () => {
+    expect(parseSendRequest({ ...good, images: Array.from({ length: 11 }, () => testImage('image/png')) })).toEqual({ error: 'At most 10 images per message' });
+    expect(parseSendRequest({ ...good, images: [testImage('image/png', 5 * 1024 * 1024 + 1)] })).toEqual({ error: 'Each image must be under 5 MB' });
+    expect(parseSendRequest({ ...good, images: [{ type: 'image/svg+xml', data: testImage('image/png').data }] })).toEqual({ error: 'Only PNG, JPEG, GIF and WebP images can be sent' });
+    expect(parseSendRequest({ ...good, images: [{ type: 'image/png', data: testImage('image/jpeg').data }] })).toEqual({ error: 'Only PNG, JPEG, GIF and WebP images can be sent' });
   });
 
   test('undo arguments', () => {
