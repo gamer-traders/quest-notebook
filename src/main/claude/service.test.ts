@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
@@ -122,7 +122,8 @@ async function setup(over: { locate?: () => Promise<string | null>; stopGraceMs?
   });
   const made = service;
   cleanups.push(async () => {
-    made.close();
+    // Waits for the record of a turn the close cut short, so it isn't written into a folder being removed.
+    await made.close();
     session.close();
     for (const child of children) {
       if (running(child)) child.kill('SIGKILL');
@@ -155,8 +156,8 @@ function spawnVia(children: ChildProcess[]): typeof spawn {
 async function reopen(s: Setup): Promise<ClaudeService> {
   const session = await WorkspaceSession.open(s.root, false, { change: () => {}, lost: () => {} }, trash, 60_000);
   const service = new ClaudeService(s.root, session, { locate: async () => FAKE, spawn: spawnVia(s.children), trash, send: () => {} });
-  cleanups.push(() => {
-    service.close();
+  cleanups.push(async () => {
+    await service.close();
     session.close();
   });
   return service;
@@ -243,9 +244,76 @@ describe('a turn', () => {
         message: 'Tidy this page',
         openPage: { title: 'A', path: 'Markets/A.json' },
         references: [{ title: 'Bee', path: 'Markets/B.json' }],
-        selection: { title: 'A', text: 'one\ntwo' },
+        selections: [{ title: 'A', text: 'one\ntwo' }],
       }),
     );
+  });
+
+  test('every selection reaches Claude, in turn, under its page title as it is now', async () => {
+    const s = await setup();
+    const references = [
+      { kind: 'selection' as const, pageId: 'a', title: 'A', text: 'one' },
+      { kind: 'selection' as const, pageId: 'gone', title: 'Gone', text: 'lost' },
+      { kind: 'selection' as const, pageId: 'b', title: 'Old title', text: 'bee text' },
+      { kind: 'selection' as const, pageId: 'a', title: 'A', text: 'one again' },
+    ];
+    const { chatId, messageId } = await sendOk(s, 'Compare these', { references });
+    await doneOf(s, messageId);
+    const { argv } = await fakeLog(s);
+    expect(argv[argv.length - 1]).toBe(
+      buildPrompt({
+        message: 'Compare these',
+        openPage: null,
+        references: [],
+        selections: [
+          { title: 'A', text: 'one' },
+          { title: 'Bee', text: 'bee text' },
+          { title: 'A', text: 'one again' },
+        ],
+      }),
+    );
+    expect((await readChat(s.root, chatId))?.messages[0].references).toEqual([references[0], references[2], references[3]]);
+  });
+
+  test('the prompt sees a page added on disk just before the send, at its path and title', async () => {
+    const s = await setup();
+    // As a save the window makes just before sending: not yet read by the session.
+    await writeFile(join(s.root, 'Markets/C.json'), '{"id":"c","title":"Sea","position":2,"blocks":[]}\n');
+    const references = [{ kind: 'selection' as const, pageId: 'c', title: 'Untitled', text: 'waves' }];
+    const { chatId, messageId } = await sendOk(s, 'Look at this', { openPageId: 'c', references });
+    await doneOf(s, messageId);
+    const { argv } = await fakeLog(s);
+    expect(argv[argv.length - 1]).toBe(
+      buildPrompt({ message: 'Look at this', openPage: { title: 'Sea', path: 'Markets/C.json' }, references: [], selections: [{ title: 'Sea', text: 'waves' }] }),
+    );
+    expect((await readChat(s.root, chatId))?.messages[0].references).toEqual([{ kind: 'page', pageId: 'c', title: 'Sea' }, references[0]]);
+  });
+
+  test('a message over 100,000 characters is refused as too long, and nothing runs', async () => {
+    const s = await setup();
+    expect(await s.service.send(request('x'.repeat(100_001)))).toEqual({ error: 'That message is too long' });
+    expect(s.children).toHaveLength(0);
+    expect(await s.service.listChats()).toEqual([]);
+    const { messageId } = await sendOk(s, `Add a paragraph${' '.repeat(100_000 - 'Add a paragraph'.length)}`);
+    expect((await doneOf(s, messageId)).error).toBeUndefined();
+  });
+
+  test('a turn whose reply cannot be saved still ends, with a done that says why, and the service is free again', async () => {
+    const s = await setup();
+    const { chatId, messageId } = await sendOk(s, 'sleep');
+    await fakeReady(s);
+    const chats = join(s.root, CHATS_DIR);
+    await chmod(chats, 0o555);
+    cleanups.push(() => chmod(chats, 0o755));
+    await s.service.stop();
+    const message = await doneOf(s, messageId);
+    expect(message.error).toMatch(/^Couldn't save this reply: /);
+    expect(message.changes).toBeUndefined();
+    expect((await readChat(s.root, chatId))?.messages).toHaveLength(1);
+
+    await chmod(chats, 0o755);
+    const next = await sendOk(s, 'Add a paragraph');
+    expect((await doneOf(s, next.messageId)).error).toBeUndefined();
   });
 
   test('a second send while a turn runs is refused', async () => {
@@ -343,6 +411,29 @@ describe('stopping', () => {
     expect(s.events).toEqual([]);
   });
 
+  test('close resolves once the record of the turn it cut short is in the chat file, and closing again gives the same promise', async () => {
+    const s = await setup();
+    const { chatId, messageId } = await sendOk(s, 'edit then sleep');
+    await waitFor('the actions', () => actionEvents(s, messageId).length === 3);
+    await s.session.settle();
+
+    const closing = s.service.close();
+    expect(s.service.close()).toBe(closing);
+    await closing;
+    // No waiting: the record is there as soon as close is done.
+    const reply = (await readChat(s.root, chatId))?.messages[1];
+    expect(reply).toMatchObject({ id: messageId, error: 'Stopped: the workspace was closed' });
+    expect(reply?.changes?.map((c) => c.path)).toEqual(['Markets/A.json', 'Markets/A/drawing-x1.svg']);
+  });
+
+  test('close with no turn running resolves at once, and is the same promise each time', async () => {
+    const s = await setup();
+    const closing = s.service.close();
+    expect(s.service.close()).toBe(closing);
+    await closing;
+    expect(s.service.running).toBe(false);
+  });
+
   test('close mid-turn kills the child and keeps a record of the reply in its own chat, and nothing more is written or sent (Review Focus 2)', async () => {
     const s = await setup();
     const { chatId, messageId } = await sendOk(s, 'noisy sleep');
@@ -373,6 +464,23 @@ describe('stopping', () => {
 });
 
 describe('status', () => {
+  test('making a service looks for nothing and runs nothing: only status and send do', async () => {
+    let looked = 0;
+    const s = await setup({
+      locate: async () => {
+        looked++;
+        return FAKE;
+      },
+    });
+    await sleep(50);
+    expect(looked).toBe(0);
+    expect(s.children).toHaveLength(0);
+    expect(await s.service.listChats()).toEqual([]);
+    expect(looked).toBe(0);
+    await s.service.status();
+    expect(looked).toBe(1);
+  });
+
   test('missing when claude is not found, and send says so', async () => {
     const s = await setup({ locate: async () => null });
     expect(await s.service.status()).toEqual({ state: 'missing' });
@@ -592,7 +700,6 @@ describe('request checks', () => {
       'Hi',
       { ...good, message: '' },
       { ...good, message: '   ' },
-      { ...good, message: 'x'.repeat(100_001) },
       { ...good, message: 5 },
       { ...good, chatId: 5 },
       { ...good, openPageId: 5 },
@@ -604,7 +711,8 @@ describe('request checks', () => {
     ]) {
       expect(parseSendRequest(bad)).toBeNull();
     }
-    expect(parseSendRequest({ ...good, message: 'x'.repeat(100_000) })).not.toBeNull();
+    // Length is the service's to refuse, with its own message.
+    expect(parseSendRequest({ ...good, message: 'x'.repeat(100_001) })).not.toBeNull();
   });
 
   test('undo arguments', () => {

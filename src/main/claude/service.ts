@@ -16,7 +16,7 @@ import {
   type UndoResult,
 } from '@shared/ipc';
 import type { RepairedFile, WorkspaceSession } from '../workspace/session';
-import { chatTitle, deleteChat, listChats, newChatId, readChat, writeChat } from './chats';
+import { chatTitle, deleteChat, listChats, newChatId, parseReference, readChat, writeChat } from './chats';
 import { buildPrompt, claudeArgs, claudeEnv, isSessionId } from './command';
 import { LineSplitter, parseStreamLine, type StreamItem } from './events';
 import { WORKSPACE_GUIDE } from './guide';
@@ -43,6 +43,7 @@ const BUSY = 'Claude is still answering';
 const CLOSED = 'This workspace is closed';
 const CLOSED_MID_TURN = 'Stopped: the workspace was closed';
 const NOT_FOUND = "Couldn't find Claude Code";
+const TOO_LONG = 'That message is too long';
 /** The CLI no longer has the session a chat would resume. */
 const LOST_SESSION = /no conversation found|session.*not found/i;
 const MAX_MESSAGE = 100_000;
@@ -97,6 +98,8 @@ interface Turn {
   exiting: boolean;
   /** The reply is being written to the chat: by the end of the turn, or by close. */
   saving: boolean;
+  /** That write, settled either way: what close waits for. */
+  record: Promise<void> | null;
   stopTimer: ReturnType<typeof setTimeout> | null;
   exitTimer: ReturnType<typeof setTimeout> | null;
 }
@@ -125,20 +128,16 @@ function isUndoable(change: unknown): change is FileChange {
   return /\.json$/i.test(name) || SIDECAR_NAME.test(name);
 }
 
-function parseReference(v: unknown): ChatReference | null {
-  if (!isObject(v) || !isString(v.pageId) || !isString(v.title)) return null;
-  if (v.kind === 'page') return { kind: 'page', pageId: v.pageId, title: v.title };
-  if (v.kind === 'selection' && isString(v.text)) return { kind: 'selection', pageId: v.pageId, title: v.title, text: v.text };
-  return null;
-}
-
-/** A send request from the window, checked field by field and rebuilt with only the known fields; null when anything is off. */
+/**
+ * A send request from the window, checked field by field and rebuilt with only the known fields; null when anything is
+ * off. A message too long is the service's to refuse, so the window can say why.
+ */
 export function parseSendRequest(v: unknown): SendRequest | null {
   if (!isObject(v)) return null;
   const { chatId, message, references, openPageId } = v;
   if (chatId !== null && !isString(chatId)) return null;
   if (openPageId !== null && !isString(openPageId)) return null;
-  if (!isString(message) || message.trim() === '' || message.length > MAX_MESSAGE) return null;
+  if (!isString(message) || message.trim() === '') return null;
   if (!Array.isArray(references)) return null;
   const refs: ChatReference[] = [];
   for (const ref of references) {
@@ -164,6 +163,8 @@ export function parseUndoArgs(args: unknown[]): { chatId: string; messageId: str
  */
 export class ClaudeService {
   private closed = false;
+  /** What close is waiting for: set by the first close, and given to every later one. */
+  private closing: Promise<void> | null = null;
   /** From the start of a send until its turn has ended. */
   private busy = false;
   /** Stop was asked for while a send was still starting its turn. */
@@ -187,6 +188,11 @@ export class ClaudeService {
     private readonly deps: ClaudeDeps,
   ) {}
 
+  /** A send or its turn is under way. */
+  get running(): boolean {
+    return this.busy;
+  }
+
   private get graceMs(): number {
     return this.deps.stopGraceMs ?? 3000;
   }
@@ -207,6 +213,7 @@ export class ClaudeService {
   async send(req: SendRequest): Promise<{ chatId: string; messageId: string } | { error: string }> {
     if (this.closed) return { error: CLOSED };
     if (this.busy) return { error: BUSY };
+    if (req.message.length > MAX_MESSAGE) return { error: TOO_LONG };
     this.busy = true;
     this.stopRequested = false;
     let started = false;
@@ -224,6 +231,9 @@ export class ClaudeService {
           : await readChat(this.root, req.chatId);
       if (!chat) return { error: 'That chat is gone' };
       this.activeChatId = chat.id;
+      // The window saves before it sends: a page that save made or renamed is in the prompt at its path and title now.
+      await this.session.settle();
+      if (this.closed) return { error: CLOSED };
       const { references, prompt } = this.prompt(req);
       const realRoot = await realpath(this.root);
       if (this.closed) return { error: CLOSED };
@@ -257,6 +267,7 @@ export class ClaudeService {
         stderr: '',
         exiting: false,
         saving: false,
+        record: null,
         stopTimer: null,
         exitTimer: null,
       };
@@ -282,7 +293,7 @@ export class ClaudeService {
     const references: ChatReference[] = [];
     const pages: { title: string; path: string }[] = [];
     const listed = new Set<string>();
-    let selection: { title: string; text: string } | null = null;
+    const selections: { title: string; text: string }[] = [];
     const open = req.openPageId === null ? undefined : this.session.pageInfo(req.openPageId);
     if (open && req.openPageId !== null) {
       references.push({ kind: 'page', pageId: req.openPageId, title: open.title });
@@ -296,11 +307,11 @@ export class ClaudeService {
         listed.add(ref.pageId);
         pages.push(info);
       } else {
-        selection ??= { title: info.title, text: ref.text };
+        selections.push({ title: info.title, text: ref.text });
       }
       references.push(ref);
     }
-    return { references, prompt: buildPrompt({ message: req.message, openPage: open ?? null, references: pages, selection }) };
+    return { references, prompt: buildPrompt({ message: req.message, openPage: open ?? null, references: pages, selections }) };
   }
 
   private start(turn: Turn, claudePath: string, prompt: string): void {
@@ -443,34 +454,19 @@ export class ClaudeService {
     return chat;
   }
 
-  /** The child is gone (or never started): the reply is finished, saved, and reported. */
+  /**
+   * The child is gone (or never started): the reply is finished, saved, and reported. Whatever goes wrong, the window
+   * gets its `done` (unless the workspace closed), and the service is free again.
+   */
   private async end(turn: Turn, exit: Exit): Promise<void> {
     if (turn.exiting) return;
     turn.exiting = true;
     this.clearTimers(turn);
     try {
-      // A close has already kept the record of this turn.
-      if (this.closed) return;
-      for (const line of turn.splitter.end()) this.line(turn, line);
-      // So the turn's last writes are seen.
-      await this.session.settle().catch((error: unknown) => console.error('Reading the workspace after a turn failed:', error));
-      if (this.closed) return;
-      turn.recording = false;
-      const message = this.reply(turn, this.errorOf(turn, exit));
-      if (turn.done?.loggedOut) this.loggedOut = true;
-      else if (turn.done?.ok) this.loggedOut = false;
-      const chat = this.withReply(turn, message);
-      turn.saving = true;
-      try {
-        await writeChat(this.root, chat);
-        this.remember(chat.id, message);
-      } catch (writeError) {
-        console.error('Saving the chat failed:', writeError);
-      }
-      if (this.closed) return;
-      this.deps.send({ chatId: chat.id, messageId: turn.messageId, kind: 'done', message });
+      const message = await this.finish(turn, exit);
+      if (message && !this.closed) this.deps.send({ chatId: turn.chat.id, messageId: turn.messageId, kind: 'done', message });
     } catch (failure) {
-      console.error('Finishing a Claude turn failed:', failure);
+      console.error('Reporting the end of a Claude turn failed:', failure);
     } finally {
       if (this.turn === turn) {
         this.turn = null;
@@ -479,6 +475,41 @@ export class ClaudeService {
         this.stopRequested = false;
         this.repairDeferred();
       }
+    }
+  }
+
+  /**
+   * The reply, saved in its chat, for the window; null once the workspace is closed, as the close keeps the record. A
+   * reply that couldn't be finished or saved comes back with why, and without its changes: undo reads them from the chat
+   * file, so they can't be undone.
+   */
+  private async finish(turn: Turn, exit: Exit): Promise<ChatMessage | null> {
+    let message: ChatMessage | null = null;
+    try {
+      if (this.closed) return null;
+      for (const line of turn.splitter.end()) this.line(turn, line);
+      // So the turn's last writes are seen.
+      await this.session.settle().catch((error: unknown) => console.error('Reading the workspace after a turn failed:', error));
+      if (this.closed) return null;
+      turn.recording = false;
+      message = this.reply(turn, this.errorOf(turn, exit));
+      if (turn.done?.loggedOut) this.loggedOut = true;
+      else if (turn.done?.ok) this.loggedOut = false;
+      const chat = this.withReply(turn, message);
+      turn.saving = true;
+      const saving = writeChat(this.root, chat);
+      turn.record = saving.then(
+        () => {},
+        () => {},
+      );
+      await saving;
+      this.remember(chat.id, message);
+      return message;
+    } catch (failure) {
+      console.error('Finishing a Claude turn failed:', failure);
+      const unsaved: ChatMessage = message ? { ...message } : { id: turn.messageId, role: 'assistant', text: turn.text.join(''), created: turn.created, actions: turn.actions };
+      delete unsaved.changes;
+      return { ...unsaved, error: `Couldn't save this reply: ${errorText(failure)}` };
     }
   }
 
@@ -594,13 +625,18 @@ export class ClaudeService {
 
   /**
    * The workspace is closing: the child is ended at once, and nothing more is reported. A running turn's reply so far
-   * is kept in its chat, in this workspace, so what Claude changed can still be undone after reopening it.
+   * is kept in its chat, in this workspace, so what Claude changed can still be undone after reopening it. Resolves
+   * (never rejects) once that record is written, or failed to be; every later call gives the same promise.
    */
-  close(): void {
-    if (this.closed) return;
+  close(): Promise<void> {
+    this.closing ??= this.closeNow();
+    return this.closing;
+  }
+
+  private closeNow(): Promise<void> {
     this.closed = true;
     const turn = this.turn;
-    if (!turn) return;
+    if (!turn) return Promise.resolve();
     if (turn.stopTimer) clearTimeout(turn.stopTimer);
     turn.stopTimer = null;
     const child = turn.child;
@@ -612,13 +648,22 @@ export class ClaudeService {
       }, this.graceMs);
       child.once('exit', () => clearTimeout(timer));
     }
-    if (!turn.saving) {
-      turn.saving = true;
-      turn.recording = false;
+    // The end of the turn is already writing its reply: that is the record.
+    if (turn.saving) return turn.record ?? Promise.resolve();
+    turn.saving = true;
+    turn.recording = false;
+    const failed = (error: unknown) => console.error('Keeping the record of a stopped turn failed:', error);
+    let record: Promise<void>;
+    try {
       // No settle: the session is closing too. The changes are those already seen.
       const chat = this.withReply(turn, this.reply(turn, turn.done?.ok ? undefined : CLOSED_MID_TURN));
-      writeChat(this.root, chat).catch((error: unknown) => console.error('Keeping the record of a stopped turn failed:', error));
+      record = writeChat(this.root, chat).catch(failed);
+    } catch (error) {
+      failed(error);
+      record = Promise.resolve();
     }
+    turn.record = record;
+    return record;
   }
 
   /** Looks for the CLI again, and asks it its version and whether it's logged in. */

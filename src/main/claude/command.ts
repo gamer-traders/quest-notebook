@@ -58,13 +58,13 @@ interface PageRef {
   path: string;
 }
 
-/** The message plus what the owner attached: pages, then selected text. Empty sections are left out. */
-export function buildPrompt(p: { message: string; openPage: PageRef | null; references: PageRef[]; selection: { title: string; text: string } | null }): string {
+/** The message plus what the owner attached: pages, then each selected passage in turn, quoted. Empty sections are left out. */
+export function buildPrompt(p: { message: string; openPage: PageRef | null; references: PageRef[]; selections: { title: string; text: string }[] }): string {
   const parts = [p.message];
   const refs: string[] = [];
   if (p.openPage) refs.push(`- The page open now: ${p.openPage.title} (${p.openPage.path})`);
   for (const ref of p.references) if (ref.path !== p.openPage?.path) refs.push(`- ${ref.title} (${ref.path})`);
   if (refs.length) parts.push(['References:', ...refs].join('\n'));
-  if (p.selection) parts.push([`Selected text from ${p.selection.title}:`, ...p.selection.text.split('\n').map((line) => `> ${line}`)].join('\n'));
+  for (const selection of p.selections) parts.push([`Selected text from ${selection.title}:`, ...selection.text.split('\n').map((line) => `> ${line}`)].join('\n'));
   return parts.join('\n\n');
 }

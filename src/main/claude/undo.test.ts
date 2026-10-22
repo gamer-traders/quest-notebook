@@ -47,10 +47,18 @@ test('trashes created files and the empty folder they leave, but never the space
   expect(await exists(join(root, 'Markets'))).toBe(true);
 });
 
-test('a created file that is already gone is not an error', async () => {
-  const root = await workspace({ 'Markets/x.json': 'k' });
-  const result = await undoChanges(root, [{ ...created('Markets/B.json', 'p'), after: null }], { force: false, trash });
-  expect(result.conflicts).toEqual([]);
+test('a created file that is already gone counts as undone, with nothing trashed and no conflict', async () => {
+  const root = await workspace({ 'Markets/x.json': 'k', 'Markets/Folder/keep.txt': 'k' });
+  await rm(join(root, 'Markets/Folder/keep.txt'));
+  trashed.length = 0;
+  for (const force of [false, true]) {
+    const result = await undoChanges(root, [{ ...created('Markets/B.json', 'p'), after: null }, created('Markets/C.json', 'c'), created('Markets/Folder/D.json', 'd')], { force, trash });
+    expect(result).toEqual({ undone: ['Markets/B.json', 'Markets/C.json', 'Markets/Folder/D.json'], conflicts: [] });
+  }
+  expect(trashed).toEqual([]);
+  // The folder it left empty goes, as it would had undo trashed the file itself.
+  expect(await exists(join(root, 'Markets/Folder'))).toBe(false);
+  expect(await exists(join(root, 'Markets/x.json'))).toBe(true);
 });
 
 test('a file changed after the turn is a conflict and is left alone', async () => {

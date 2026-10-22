@@ -61,6 +61,52 @@ describe('chats on disk', () => {
     expect((await readChat(root, 'uuid0001'))?.sessionId).toBe('e607f87c-c213-4764-b30b-b92b8927eec4');
   });
 
+  test('a damaged message is read with only what is well-formed: bad fields and bad items are dropped, the chat is kept', async () => {
+    const root = await tmp();
+    await mkdir(join(root, CHATS_DIR), { recursive: true });
+    const created = '2026-01-02T00:00:00.000Z';
+    const goodRef = { kind: 'selection', pageId: 'a', title: 'A', text: 'x' };
+    const goodAction = { verb: 'edited', id: 't1', path: 'Markets/A.json', refused: true };
+    const goodChange = { path: 'Markets/A.json', pageId: 'a', kind: 'edited', drawing: false, before: 'old', after: 'new' };
+    const messages = [
+      {
+        id: 'm1',
+        role: 'user',
+        text: 'Hi',
+        created,
+        references: [goodRef, { kind: 'selection', pageId: 'a', title: 'A' }, { kind: 'link', pageId: 'a', title: 'A' }, null, 'x', { kind: 'page', pageId: 5, title: 'A' }],
+      },
+      {
+        id: 'm2',
+        role: 'assistant',
+        text: 'Done',
+        created,
+        actions: [goodAction, { verb: 'flew' }, { path: 'x' }, 7, { verb: 'read', path: 5, detail: ['x'], refused: 'yes' }],
+        changes: [goodChange, { ...goodChange, kind: 'moved' }, { ...goodChange, before: 5 }, { ...goodChange, path: null }, { ...goodChange, drawing: 'no' }, 'x', { path: 'Markets/B.json', kind: 'created', drawing: true, before: null, after: '<svg/>', pageId: 5, newSpace: 'yes' }],
+        undone: ['Markets/A.json', 5, null],
+        error: { message: 'boom' },
+      },
+      { id: 'm3', role: 'assistant', text: 'Odd', created, references: 'a', actions: { verb: 'read' }, changes: 'all', undone: 'Markets/A.json', error: 'It broke' },
+    ];
+    await writeFile(join(root, CHATS_DIR, 'damaged1.json'), JSON.stringify({ ...chat('damaged1', created), messages }));
+
+    const read = await readChat(root, 'damaged1');
+    expect(read?.messages).toEqual([
+      { id: 'm1', role: 'user', text: 'Hi', created, references: [goodRef] },
+      {
+        id: 'm2',
+        role: 'assistant',
+        text: 'Done',
+        created,
+        actions: [goodAction, { verb: 'read' }],
+        changes: [goodChange, { path: 'Markets/B.json', kind: 'created', drawing: true, before: null, after: '<svg/>' }],
+        undone: ['Markets/A.json'],
+      },
+      { id: 'm3', role: 'assistant', text: 'Odd', created, error: 'It broke' },
+    ]);
+    expect((await listChats(root)).map((c) => c.id)).toEqual(['damaged1']);
+  });
+
   test('ids that could leave the folder are refused', async () => {
     const root = await tmp();
     for (const id of ['../x', 'ABCDEFGH', 'abc']) expect(await readChat(root, id)).toBeNull();

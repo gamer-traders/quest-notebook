@@ -48,6 +48,11 @@ async function setup() {
 
   const events: ClaudeEvent[] = [];
   const children: ChildProcess[] = [];
+  let looked = 0;
+  const locate = async () => {
+    looked++;
+    return FAKE;
+  };
   const spawnFake = ((command: string, args: readonly string[], options: SpawnOptions) => {
     const child = spawn(process.execPath, [command, ...args], options);
     children.push(child);
@@ -64,10 +69,10 @@ async function setup() {
       confirmAdopt: async () => true,
       claudeEvent: (e) => events.push(e),
     },
-    { locate: async () => FAKE, spawn: spawnFake, stopGraceMs: 200 },
+    { locate, spawn: spawnFake, stopGraceMs: 200 },
   );
   cleanups.push(async () => {
-    workspaces.close();
+    await workspaces.close();
     for (const child of children) {
       if (running(child)) child.kill('SIGKILL');
       await exited(child);
@@ -76,7 +81,7 @@ async function setup() {
     else process.env.FAKE_LOG = savedLog;
     await rm(parent, { recursive: true, force: true });
   });
-  return { first, second, log, workspaces, events, children };
+  return { first, second, log, workspaces, events, children, looks: () => looked };
 }
 
 const request = (message: string): SendRequest => ({ chatId: null, message, references: [], openPageId: null });
@@ -170,4 +175,56 @@ test("the window's tidy-up of a page Claude wrote reaches the open workspace's c
   expect((await session.flush({ spaces: session.snapshot.spaces, createdSpaces: [], deletedSpaces: [], journalSpaceId: null, deletes: [], saves, repairs: ['rng00001'] })).ok).toBe(true);
   expect(await service.undo(sent.chatId, sent.messageId, null, false)).toEqual({ undone: ['Markets/R.json'], conflicts: [] });
   expect(await exists(join(s.first, 'Markets/R.json'))).toBe(false);
+});
+
+test('quitting mid-turn: close resolves once the reply so far is in the chat file', async () => {
+  const s = await setup();
+  const { chatId, messageId } = await startSleeping(s);
+  expect(s.workspaces.claudeBusy).toBe(true);
+  const closing = s.workspaces.close();
+  expect(s.workspaces.claude).toBeNull();
+  await closing;
+  // No waiting: the record is there as soon as close is done.
+  expect((await readChat(s.first, chatId))?.messages[1]).toMatchObject({ id: messageId, role: 'assistant', error: 'Stopped: the workspace was closed' });
+  expect(s.workspaces.claudeBusy).toBe(false);
+});
+
+test("quitting just after a switch mid-turn still waits for the old workspace's record", async () => {
+  const s = await setup();
+  const { chatId, messageId } = await startSleeping(s);
+  expect((await s.workspaces.open(s.second)).ok).toBe(true);
+  await s.workspaces.close();
+  expect((await readChat(s.first, chatId))?.messages[1]).toMatchObject({ id: messageId, error: 'Stopped: the workspace was closed' });
+});
+
+test('no turn running: nothing to wait for when quitting', async () => {
+  const s = await setup();
+  expect(s.workspaces.claudeBusy).toBe(false);
+  expect((await s.workspaces.open(s.first)).ok).toBe(true);
+  expect(s.workspaces.claudeBusy).toBe(false);
+  await s.workspaces.close();
+  expect(s.workspaces.claudeBusy).toBe(false);
+});
+
+test('a window loading afresh stops the running turn, which ends as Stopped', async () => {
+  const s = await setup();
+  const { messageId } = await startSleeping(s, 'sleep');
+  const current = await s.workspaces.current();
+  expect(current?.ok).toBe(true);
+  const done = await waitFor('the done event', () => s.events.find((e) => e.kind === 'done' && e.messageId === messageId));
+  expect(done.kind === 'done' && done.message.error).toBe('Stopped');
+  expect(s.children[0].exitCode).toBe(130);
+  expect(s.workspaces.claudeBusy).toBe(false);
+});
+
+test('opening and switching workspaces never looks for claude: only status and send do', async () => {
+  const s = await setup();
+  expect((await s.workspaces.open(s.first)).ok).toBe(true);
+  expect((await s.workspaces.open(s.second)).ok).toBe(true);
+  expect(await s.workspaces.current()).toMatchObject({ ok: true });
+  await sleep(50);
+  expect(s.looks()).toBe(0);
+  expect(s.children).toHaveLength(0);
+  await s.workspaces.claude?.status();
+  expect(s.looks()).toBe(1);
 });

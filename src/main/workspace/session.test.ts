@@ -299,6 +299,39 @@ describe('a flush that only tidies what an outside write left', () => {
     }
   });
 
+  test('a repair of a page that changed on disk unseen is refused as stale, and the newer text stays', async () => {
+    const { root, session, repaired, batch } = await open();
+    try {
+      // Written just now, before the watcher (or anything else) has read the folder again.
+      const newer = '{"id":"a","title":"A","blocks":[{"type":"paragraph","text":"newer"}]}\n';
+      await writeFile(join(root, 'Markets/A.json'), newer);
+      const result = await session.flush(batch({ json: tidied }, ['a']));
+      expect(result.stale).toEqual(['a']);
+      expect(await readFile(join(root, 'Markets/A.json'), 'utf8')).toBe(newer);
+      expect(repaired).toEqual([]);
+
+      // Once main has seen the newer text, a repair of it goes through.
+      await session.settle();
+      const again = await session.flush(batch({ json: tidied }, ['a']));
+      expect(again.stale ?? []).toEqual([]);
+      expect(await readFile(join(root, 'Markets/A.json'), 'utf8')).toBe(tidied);
+    } finally {
+      session.close();
+    }
+  });
+
+  test("an owner's save is not checked that way: it is written as before", async () => {
+    const { root, session, batch } = await open();
+    try {
+      await writeFile(join(root, 'Markets/A.json'), '{"id":"a","title":"A","blocks":[{"type":"paragraph","text":"newer"}]}\n');
+      const result = await session.flush(batch({ json: tidied }));
+      expect(result.stale ?? []).toEqual([]);
+      expect(await readFile(join(root, 'Markets/A.json'), 'utf8')).toBe(tidied);
+    } finally {
+      session.close();
+    }
+  });
+
   test('says nothing for a repair refused as stale', async () => {
     const { root, session, repaired, batch } = await open();
     try {

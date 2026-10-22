@@ -73,14 +73,14 @@ test('claudeEnv does not mutate its input', () => {
   expect(env).toEqual({ A: '1', ANTHROPIC_API_KEY: 'k' });
 });
 
-const none = { openPage: null, references: [], selection: null };
+const none = { openPage: null, references: [], selections: [] };
 
 test('buildPrompt lays out every part', () => {
   const text = buildPrompt({
     message: 'Tidy this',
     openPage: { title: 'Setup', path: 'Markets/Setup.json' },
     references: [{ title: 'Risk', path: 'Markets/Risk.json' }],
-    selection: { title: 'Setup', text: 'line one\nline two' },
+    selections: [{ title: 'Setup', text: 'line one\nline two' }],
   });
   expect(text).toBe(
     ['Tidy this', '', 'References:', '- The page open now: Setup (Markets/Setup.json)', '- Risk (Markets/Risk.json)', '', 'Selected text from Setup:', '> line one', '> line two'].join('\n'),
@@ -93,7 +93,12 @@ test('buildPrompt gives the message alone when nothing is attached', () => {
 
 test('buildPrompt leaves out empty sections', () => {
   expect(buildPrompt({ message: 'M', ...none, references: [{ title: 'A', path: 'S/A.json' }] })).toBe('M\n\nReferences:\n- A (S/A.json)');
-  expect(buildPrompt({ message: 'M', ...none, selection: { title: 'A', text: 'x' } })).toBe('M\n\nSelected text from A:\n> x');
+  expect(buildPrompt({ message: 'M', ...none, selections: [{ title: 'A', text: 'x' }] })).toBe('M\n\nSelected text from A:\n> x');
+});
+
+test('buildPrompt quotes every selection in turn, one block after another', () => {
+  const text = buildPrompt({ message: 'M', ...none, selections: [{ title: 'A', text: 'one' }, { title: 'B', text: 'two\nthree' }, { title: 'A', text: 'four' }] });
+  expect(text).toBe(['M', '', 'Selected text from A:', '> one', '', 'Selected text from B:', '> two', '> three', '', 'Selected text from A:', '> four'].join('\n'));
 });
 
 test('buildPrompt lists the open page once', () => {
@@ -101,7 +106,7 @@ test('buildPrompt lists the open page once', () => {
     message: 'M',
     openPage: { title: 'A', path: 'S/A.json' },
     references: [{ title: 'A', path: 'S/A.json' }, { title: 'B', path: 'S/B.json' }],
-    selection: null,
+    selections: [],
   });
   expect(text).toBe('M\n\nReferences:\n- The page open now: A (S/A.json)\n- B (S/B.json)');
 });

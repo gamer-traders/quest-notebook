@@ -1,4 +1,4 @@
-import { mkdir, stat } from 'node:fs/promises';
+import { mkdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { formatJson } from '@shared/formatJson';
 import type { DiskDelta, FileChange, FlushBatch, FlushResult, UiState, WorkspaceSnapshot } from '@shared/ipc';
@@ -135,13 +135,22 @@ export class WorkspaceSession {
       const seen = batch.seenSeq ?? this.seq;
       const isStale = (id: string) => (this.changedAt.get(id) ?? 0) > seen;
       const stale = [...batch.saves.map((s) => s.id), ...batch.deletes].filter(isStale);
-      const fresh = { ...batch, saves: batch.saves.filter((s) => !isStale(s.id)), deletes: batch.deletes.filter((id) => !isStale(id)) };
-      // Pages saved only to tidy what an outside write left, as they were on disk before.
+      // Pages saved only to tidy what an outside write left, as they were on disk before. The tidy-up was planned from
+      // what main last knew: if the page file holds something else by now (a write not yet seen), it's left for the
+      // window to plan again rather than written over.
       const repairs = new Set(Array.isArray(batch.repairs) ? batch.repairs : []);
-      const tidied = fresh.saves.flatMap((s) => {
-        const files = repairs.has(s.id) ? pageFiles(this.known.index, s.id) : null;
-        return files ? [{ id: s.id, files }] : [];
-      });
+      const tidied: { id: string; files: PageFiles }[] = [];
+      const unseen = new Set<string>();
+      for (const save of batch.saves) {
+        if (!repairs.has(save.id) || isStale(save.id)) continue;
+        const files = pageFiles(this.known.index, save.id);
+        if (!files) continue;
+        const onDisk = await readFile(insideRoot(this.root, files.path), 'utf8').catch(() => null);
+        if (onDisk === files.text) tidied.push({ id: save.id, files });
+        else unseen.add(save.id);
+      }
+      stale.push(...unseen);
+      const fresh = { ...batch, saves: batch.saves.filter((s) => !isStale(s.id) && !unseen.has(s.id)), deletes: batch.deletes.filter((id) => !isStale(id)) };
       const result = await applyFlush(this.root, this.known.index, fresh, { trash: this.trash, now: () => new Date() });
       this.known = knownAfterFlush(this.known, fresh);
       const repaired = tidied.flatMap(({ id, files }) => changedFiles(files, pageFiles(this.known.index, id)));
