@@ -118,7 +118,8 @@ export class WorkspaceSession {
       const scanned = await scanWorkspace(this.root, this.known.index);
       this.known = knownFromScan(scanned);
       this.snapshot = { ...scanned.snapshot, isNew: this.snapshot.isNew };
-      return this.snapshot;
+      // A window loading this has seen every change reported so far, so its saves aren't refused as stale.
+      return { ...this.snapshot, seq: this.seq };
     });
   }
 

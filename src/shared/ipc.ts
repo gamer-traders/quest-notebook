@@ -44,6 +44,8 @@ export interface WorkspaceSnapshot {
   ui: UiState;
   /** True when the folder only just became a workspace. */
   isNew: boolean;
+  /** How many outside changes main had reported when this was read. The pages include them all, so a window loading it has seen them. */
+  seq?: number;
 }
 
 /** .quest/workspace.json */

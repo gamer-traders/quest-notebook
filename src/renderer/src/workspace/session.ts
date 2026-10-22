@@ -19,7 +19,7 @@ export function startWorkspace(snapshot: WorkspaceSnapshot): void {
   useSaveStatus.setState({ error: null });
   const loaded = snapshotToState(snapshot);
   useStore.getState().loadWorkspace(snapshot.root, snapshot.name, loaded);
-  sync = startSync(window.quest.workspace, useStore, loaded.repaired, loaded.drawingsToWrite);
+  sync = startSync(window.quest.workspace, useStore, loaded.repaired, loaded.drawingsToWrite, snapshot.seq ?? 0);
   // Claude starts this workspace with a new chat, and looks at its chats.
   useClaude.getState().reset();
 }

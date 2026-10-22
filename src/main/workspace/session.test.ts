@@ -67,6 +67,29 @@ test('a save planned before an outside change to that page is refused as stale, 
   }
 }, 20_000);
 
+test('a window that reads the workspace afresh has seen every change so far, so its saves are not refused as stale', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'quest-fresh-'));
+  await mkdir(join(root, 'Markets'));
+  await writeFile(join(root, 'Markets/A.json'), JSON.stringify({ id: 'a', title: 'A', position: 0, blocks: [] }));
+  const session = await WorkspaceSession.open(root, false, { change: () => {}, lost: () => {} }, async () => {});
+  try {
+    expect((await session.fresh()).seq).toBe(0);
+    await writeFile(join(root, 'Markets/A.json'), JSON.stringify({ id: 'a', title: 'A', position: 0, blocks: [{ type: 'paragraph', text: 'from outside' }] }));
+    await session.settle();
+
+    // A reloaded window (or a new one on macOS) reads the workspace afresh, outside changes included.
+    const snapshot = await session.fresh();
+    expect(snapshot.seq).toBe(1);
+    const markets = snapshot.spaces[0];
+    const save = { spaces: [markets], createdSpaces: [], deletedSpaces: [], journalSpaceId: null, deletes: [], seenSeq: snapshot.seq, saves: [{ id: 'a', spaceId: markets.id, parentId: null, title: 'A', json: '{"id":"a","title":"A","position":0,"blocks":[]}\n', sidecars: {} }] };
+    const result = await session.flush(save);
+    expect(result.stale ?? []).toEqual([]);
+    expect(await readFile(join(root, 'Markets/A.json'), 'utf8')).toBe('{"id":"a","title":"A","position":0,"blocks":[]}\n');
+  } finally {
+    session.close();
+  }
+}, 20_000);
+
 test('saving into a workspace whose folder is gone re-creates nothing and reports it lost', async () => {
   const parent = await mkdtemp(join(tmpdir(), 'quest-gone-'));
   const root = join(parent, 'ws');

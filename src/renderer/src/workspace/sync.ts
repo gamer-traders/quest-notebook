@@ -232,6 +232,8 @@ export function startSync<S extends SyncedState>(
   store: UseBoundStore<StoreApi<S>>,
   unsaved: Set<string>,
   drawingsToWrite: Map<string, Set<string>> = new Map(),
+  /** The last disk change the loaded workspace already holds. */
+  seenAtStart = 0,
 ): SyncHandle {
   // Everything this sync sends is for the workspace open when it started.
   const root = store.getState().workspace?.root;
@@ -247,7 +249,7 @@ export function startSync<S extends SyncedState>(
   let inFlight: Promise<void> | null = null;
   let lastUi = JSON.stringify(uiOf(store.getState()));
   // The last disk change taken in. Main refuses saves of pages that changed on disk after it.
-  let seenSeq = 0;
+  let seenSeq = seenAtStart;
 
   const schedule = (delay = SAVE_DELAY) => {
     if (stopped) return;

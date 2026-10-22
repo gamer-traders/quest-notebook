@@ -195,6 +195,16 @@ test('pages missing fields when the workspace loads are written back without wai
   expect(batches[0].repairs).toEqual(['a']);
 });
 
+test('a window that loaded the workspace after outside changes starts out having seen them', async () => {
+  sync.stop();
+  const loaded = snapshotToState(snapshot);
+  useStore.getState().loadWorkspace('/w', 'W', loaded);
+  sync = startSync(api, useStore, loaded.repaired, new Map(), 7);
+  useStore.getState().updateNotebook('a', { title: 'A after reload' });
+  await sync.flush();
+  expect(batches[0].seenSeq).toBe(7);
+});
+
 test('batches say which disk change the window has seen, and saves refused as stale are planned again', async () => {
   vi.useFakeTimers();
   sync.applyFromDisk(() => useStore.getState().applyDiskDelta({ seq: 1, spaces: snapshot.spaces, journalSpaceId: null, pages: [], removed: [] }), 4);
