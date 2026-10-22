@@ -1,9 +1,10 @@
-import { useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type Ref } from 'react';
-import type { ChatReference } from '@shared/ipc';
+import { useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type Ref } from 'react';
+import type { ChatReference, ImageData } from '@shared/ipc';
 import { useStore } from '../store';
 import { displayTitle } from '../page/tree';
 import { linkChoiceLabel, linkChoicePath, linkChoices, type LinkChoice } from '../editor/linkItems';
-import { atQuery, isTooLong, referenceLabel, withoutQuery } from './panel';
+import { atQuery, errorText, isTooLong, referenceLabel, referenceTooltip, withoutQuery } from './panel';
+import { checkImages, dataUrlOf, readImage } from './images';
 import { useClaude } from './store';
 
 type PageChoice = Extract<LinkChoice, { kind: 'notebook' }>;
@@ -13,6 +14,37 @@ export interface ComposerHandle {
   /** Puts words in the box, to be edited before sending. */
   fill: (text: string) => void;
 }
+
+/** Pasted or dropped files: the images that can go join the next message, and the box says why any others can't. */
+export async function addImageFiles(files: File[]): Promise<void> {
+  const { accepted, error } = checkImages(useClaude.getState().images.length, files);
+  if (error) useClaude.setState({ error });
+  if (accepted.length === 0) return;
+  try {
+    useClaude.getState().addImages(await Promise.all(accepted.map(readImage)));
+  } catch (err) {
+    useClaude.setState({ error: errorText(err) });
+  }
+}
+
+/** The images pasted or dropped, if the clipboard or the drop holds files. Null leaves words to go in as usual. */
+export function transferredFiles(data: Pick<DataTransfer, 'files' | 'types'> | null): File[] | null {
+  const files = [...(data?.files ?? [])];
+  if (files.length === 0) return null;
+  // Words copied from a sheet or a document come with a picture of themselves: the words go in.
+  const types = [...(data?.types ?? [])];
+  if (types.includes('text/plain') && types.includes('text/html')) return null;
+  return files;
+}
+
+// Each image keeps its chip while others come and go.
+const imageKeys = new WeakMap<ImageData, number>();
+let nextImageKey = 0;
+const keyOf = (image: ImageData) => {
+  let key = imageKeys.get(image);
+  if (key === undefined) imageKeys.set(image, (key = nextImageKey++));
+  return key;
+};
 
 /** Puts focus back on the page: its text, or its title when it has no editor. */
 export function focusPage(): void {
@@ -39,14 +71,15 @@ function Chip({ label, title, removeLabel, onRemove }: { label: string; title?: 
   );
 }
 
-/** What goes with the next message: the open page, unless taken off, and pages or passages attached. */
+/** What goes with the next message: the open page, unless taken off, pages, passages or blocks attached, and images. */
 function Chips({ openPageId }: { openPageId: string | null }) {
   const attachments = useClaude((s) => s.attachments);
+  const images = useClaude((s) => s.images);
   const skipOpenPage = useClaude((s) => s.skipOpenPage);
   const openTitle = useStore((s) => (openPageId ? displayTitle(s.notebooks.find((n) => n.id === openPageId)?.title ?? '') : ''));
-  const { setSkipOpenPage, detach } = useClaude.getState();
+  const { setSkipOpenPage, detach, removeImage } = useClaude.getState();
   const showPage = openPageId !== null && !skipOpenPage;
-  if (!showPage && attachments.length === 0) return null;
+  if (!showPage && attachments.length === 0 && images.length === 0) return null;
 
   const key = (r: ChatReference, i: number) => `${r.kind}-${r.pageId}-${i}`;
   return (
@@ -56,10 +89,18 @@ function Chips({ openPageId }: { openPageId: string | null }) {
         <Chip
           key={key(r, i)}
           label={referenceLabel(r)}
-          title={r.kind === 'selection' ? r.text.slice(0, 300) : undefined}
+          title={referenceTooltip(r)}
           removeLabel={`Remove ${referenceLabel(r)}`}
           onRemove={() => detach(i)}
         />
+      ))}
+      {images.map((image, i) => (
+        <li key={keyOf(image)} className="claude-chip claude-chip-image">
+          <img src={dataUrlOf(image)} alt={`Pasted image ${i + 1}`} />
+          <button type="button" className="claude-chip-remove" aria-label={`Remove pasted image ${i + 1}`} title="Remove" onClick={() => removeImage(i)}>
+            ×
+          </button>
+        </li>
       ))}
     </ul>
   );
@@ -80,6 +121,7 @@ export function Composer({ ref, openPageId }: { ref?: Ref<ComposerHandle>; openP
   const listId = useId();
 
   const running = useClaude((s) => s.running !== null);
+  const hasImages = useClaude((s) => s.images.length > 0);
   const sending = useClaude((s) => s.sending);
   const error = useClaude((s) => s.error);
 
@@ -120,7 +162,8 @@ export function Composer({ ref, openPageId }: { ref?: Ref<ComposerHandle>; openP
 
   const busy = running || sending;
   const tooLong = isTooLong(text);
-  const canSend = !busy && !tooLong && text.trim() !== '';
+  // Images can go without words.
+  const canSend = !busy && !tooLong && (text.trim() !== '' || hasImages);
 
   const submit = async () => {
     if (!canSend) return;
@@ -169,6 +212,13 @@ export function Composer({ ref, openPageId }: { ref?: Ref<ComposerHandle>; openP
     }
   };
 
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = transferredFiles(e.clipboardData);
+    if (!files) return;
+    e.preventDefault();
+    void addImageFiles(files);
+  };
+
   const onEdit = (value: string, caretAt: number) => {
     setText(value);
     setCaret(caretAt);
@@ -202,6 +252,7 @@ export function Composer({ ref, openPageId }: { ref?: Ref<ComposerHandle>; openP
           onChange={(e) => onEdit(e.target.value, e.target.selectionStart)}
           onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
           onKeyDown={onKeyDown}
+          onPaste={onPaste}
         />
         {pickerOpen && (
           <ul id={listId} className="claude-picker" role="listbox" aria-label="Pages">

@@ -321,3 +321,10 @@
   font-family: var(--ui);
   font-weight: 500;
 }
+
+/* The right-click menu on a block: one of the app's menus, at the pointer. */
+.menu.block-menu {
+  position: fixed;
+  right: auto;
+  z-index: 50;
+}

@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { beforeEach, expect, test, vi } from 'vitest';
-import type { Chat, ChatMessage, ChatSummary, ClaudeEvent, ClaudeStatus, FileChange, QuestApi, UndoResult } from '@shared/ipc';
+import type { Chat, ChatMessage, ChatSummary, ClaudeEvent, ClaudeStatus, FileChange, ImageData, QuestApi, UndoResult } from '@shared/ipc';
 import { useStore } from '../store';
 import type { Notebook } from '../types';
 import { bindClaude, readPanel, useClaude, writePanel } from './store';
+import { cachedImage } from './images';
 
 type Api = QuestApi['claude'];
 
@@ -27,7 +28,7 @@ const initial = useClaude.getState();
 
 beforeEach(() => {
   localStorage.clear();
-  useClaude.setState({ ...initial, open: false, width: 400, status: null, chats: [], chat: null, running: null, sending: false, streaming: { text: [], actions: [] }, notApplied: {}, attachments: [], skipOpenPage: false, error: null }, true);
+  useClaude.setState({ ...initial, open: false, width: 400, status: null, chats: [], chat: null, running: null, sending: false, streaming: { text: [], actions: [] }, notApplied: {}, attachments: [], images: [], localImages: {}, skipOpenPage: false, error: null }, true);
   api = {
     status: vi.fn(async () => ({ state: 'ready' as const })),
     send: vi.fn(async () => ({ chatId: 'c1', messageId: 'm1' })),
@@ -348,4 +349,76 @@ test('setOpen, toggle and setWidth persist', () => {
   expect(JSON.parse(localStorage.getItem('quest-notebook-claude-panel')!)).toEqual({ open: true, width: 720 });
   useClaude.getState().setOpen(false);
   expect(useClaude.getState().open).toBe(false);
+});
+
+const png = (data: string): ImageData => ({ type: 'image/png', data });
+
+test('addImages adds images up to ten, and removeImage takes one out', () => {
+  useClaude.getState().addImages([png('AA=='), png('Ag==')]);
+  expect(useClaude.getState().images).toEqual([png('AA=='), png('Ag==')]);
+  useClaude.getState().removeImage(0);
+  expect(useClaude.getState().images).toEqual([png('Ag==')]);
+  expect(useClaude.getState().error).toBeNull();
+
+  const twelve = Array.from({ length: 12 }, (_, i) => png(btoa(String(i))));
+  useClaude.getState().addImages(twelve);
+  expect(useClaude.getState().images).toEqual([png('Ag=='), ...twelve.slice(0, 9)]);
+  expect(useClaude.getState().error).toBe('At most 10 images per message');
+});
+
+test("addImages leaves out an image Claude can't see, or one over 5 MB, and says why", () => {
+  useClaude.getState().addImages([{ type: 'image/bmp', data: 'AA==' } as unknown as ImageData, png('AA==')]);
+  expect(useClaude.getState()).toMatchObject({ images: [png('AA==')], error: 'Only PNG, JPEG, GIF and WebP images can be sent' });
+  // 6,990,508 base64 letters hold 5 MB and a byte.
+  useClaude.getState().addImages([png('A'.repeat(6_990_508))]);
+  expect(useClaude.getState()).toMatchObject({ images: [png('AA==')], error: 'Each image must be under 5 MB' });
+});
+
+test('send passes the images and clears them, and the message shows them at once', async () => {
+  useClaude.getState().addImages([png('AA=='), { type: 'image/jpeg', data: '/9j/' }]);
+  await useClaude.getState().send('what is this?', null);
+  expect(api.send).toHaveBeenCalledWith({ chatId: null, message: 'what is this?', references: [], openPageId: null, images: [png('AA=='), { type: 'image/jpeg', data: '/9j/' }] });
+  const { images, chat, localImages } = useClaude.getState();
+  expect(images).toEqual([]);
+  const user = chat!.messages[0];
+  // The data stays out of the message: only the store holds it, by the message's own id.
+  expect(user).not.toHaveProperty('images');
+  expect(localImages).toEqual({ [user.id]: ['data:image/png;base64,AA==', 'data:image/jpeg;base64,/9j/'] });
+});
+
+test('a message can be images alone, but not nothing at all', async () => {
+  await useClaude.getState().send('  ', null);
+  expect(api.send).not.toHaveBeenCalled();
+  useClaude.getState().addImages([png('AA==')]);
+  await useClaude.getState().send('', 'p1');
+  expect(api.send).toHaveBeenCalledWith({ chatId: null, message: '', references: [], openPageId: 'p1', images: [png('AA==')] });
+});
+
+test("a message that isn't sent keeps its images", async () => {
+  api.send.mockResolvedValue({ error: 'Claude is busy' });
+  useClaude.getState().addImages([png('AA==')]);
+  await useClaude.getState().send('hi', null);
+  expect(useClaude.getState()).toMatchObject({ images: [png('AA==')], error: 'Claude is busy', localImages: {} });
+});
+
+test('reset clears the images waiting to be sent, and the copies shown', async () => {
+  useClaude.getState().addImages([png('AA==')]);
+  await useClaude.getState().send('hi', null);
+  useClaude.getState().addImages([png('Ag==')]);
+  useClaude.getState().reset();
+  expect(useClaude.getState()).toMatchObject({ images: [], localImages: {} });
+});
+
+test('once the chat is read back, its saved images are known by file, so they show without loading again', async () => {
+  useClaude.getState().addImages([png('AA=='), png('Ag==')]);
+  await useClaude.getState().send('look', null);
+  const saved = chatOf('c1', [
+    { id: 'u1', role: 'user', text: 'look', created: 'c', images: [{ file: 'c1-aaaaaaaa.png', type: 'image/png' }, { file: 'c1-bbbbbbbb.png', type: 'image/png' }] },
+    reply('m1'),
+  ]);
+  api.readChat.mockResolvedValue(saved);
+  handler({ chatId: 'c1', messageId: 'm1', kind: 'done', message: reply('m1') });
+  await vi.waitFor(() => expect(useClaude.getState().chat).toEqual(saved));
+  expect([cachedImage('c1/c1-aaaaaaaa.png'), cachedImage('c1/c1-bbbbbbbb.png')]).toEqual(['data:image/png;base64,AA==', 'data:image/png;base64,Ag==']);
+  expect(useClaude.getState().localImages).toEqual({});
 });

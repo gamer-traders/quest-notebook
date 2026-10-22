@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, type JSX } from 'react';
+import { useCallback, useEffect, useMemo, useState, type JSX, type MouseEvent } from 'react';
 import { filterSuggestionItems, type PartialBlock } from '@blocknote/core';
 import { en } from '@blocknote/core/locales';
 import {
@@ -38,6 +38,7 @@ import { TurnIntoSelect } from './TurnIntoSelect';
 import { schema, type PageEditor } from './schema';
 import { displayTitle } from '../page/tree';
 import { askClaude } from '../claude/ClaudePanel';
+import { AskClaudeItem, BlockMenu, blockMenuAt, type BlockMenuAt } from './BlockMenu';
 
 const PLACEHOLDER = 'Type / for blocks, [[ to link a notebook';
 
@@ -77,11 +78,12 @@ function PageToolbar() {
   );
 }
 
-/** The drag handle's menu holds only Delete: its block colours would bring colours from outside the chart marks. */
+/** The drag handle's menu holds Ask Claude and Delete: its block colours would bring colours from outside the chart marks. */
 function PageDragHandleMenu() {
   const dict = useDictionary();
   return (
     <DragHandleMenu>
+      <AskClaudeItem />
       <RemoveBlockItem>{dict.drag_handle.delete_menuitem}</RemoveBlockItem>
     </DragHandleMenu>
   );
@@ -110,6 +112,16 @@ export function NotebookEditor({ notebook, editable = true }: { notebook: Notebo
     async (query: string) => filterSuggestionItems(pageSlashItems(editor, notebookId), query),
     [editor, notebookId],
   );
+
+  // Right-clicking a block offers to ask Claude about it.
+  const [blockMenu, setBlockMenu] = useState<BlockMenuAt | null>(null);
+  const closeBlockMenu = useCallback(() => setBlockMenu(null), []);
+  const onContextMenu = (e: MouseEvent<HTMLDivElement>) => {
+    const at = blockMenuAt(editor, notebookId, e.target, e.clientX, e.clientY);
+    if (!at) return;
+    e.preventDefault();
+    setBlockMenu(at);
+  };
 
   const getLinkChoices = useCallback(async (query: string) => linkChoices(useStore.getState().notebooks, query, notebookId), [notebookId]);
   const onLinkChoice = useCallback((choice: LinkChoice) => insertNotebookLink(editor, notebookId, choice), [editor, notebookId]);
@@ -156,6 +168,7 @@ export function NotebookEditor({ notebook, editable = true }: { notebook: Notebo
         formattingToolbar={false}
         sideMenu={false}
         onChange={saver.schedule}
+        onContextMenu={onContextMenu}
       >
         <SuggestionMenuController triggerCharacter="/" getItems={getSlashItems} shouldOpen={slashOpensHere} />
         <SuggestionMenuController
@@ -168,6 +181,7 @@ export function NotebookEditor({ notebook, editable = true }: { notebook: Notebo
         <FormattingToolbarController formattingToolbar={PageToolbar} />
         <SideMenuController sideMenu={PageSideMenu} />
       </BlockNoteView>
+      {blockMenu && <BlockMenu at={blockMenu} onClose={closeBlockMenu} />}
     </NotebookContext.Provider>
   );
 }

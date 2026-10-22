@@ -47,7 +47,7 @@ beforeEach(() => {
   };
   bindClaude(api as unknown as Api, { flush: async () => {}, confirm: () => true });
   useStore.setState({ notebooks: [page('a', 'Support and resistance', A), page('w', 'Weekly levels', W)], spaces: [{ id: 'sm', name: 'Markets' }], activeId: 'a', view: 'notebook' });
-  useClaude.setState({ open: true, status: { state: 'ready' }, chats: [], chat: null, running: null, sending: false, streaming: { text: [], actions: [] }, notApplied: {}, attachments: [], skipOpenPage: false, error: null });
+  useClaude.setState({ open: true, status: { state: 'ready' }, chats: [], chat: null, running: null, sending: false, streaming: { text: [], actions: [] }, notApplied: {}, attachments: [], images: [], localImages: {}, skipOpenPage: false, error: null });
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
@@ -79,6 +79,11 @@ const type = (value: string) =>
 const press = (key: string, init: KeyboardEventInit = {}) => act(async () => void input().dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init })));
 
 const chat = (messages: ChatMessage[]): Chat => ({ id: 'c1', title: 'Levels', sessionId: null, created: 'c', updated: 'u', messages });
+/** A promise and the function that settles it. */
+function later<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
+  let resolve!: (v: T) => void;
+  return { promise: new Promise<T>((r) => (resolve = r)), resolve };
+}
 
 test('each setup state says what to do, and Check again looks again', async () => {
   api.status.mockResolvedValue({ state: 'missing' });
@@ -354,4 +359,145 @@ test('typing @ offers pages by title and path; Enter attaches one and takes the 
   await type('hi');
   await press('Enter', { shiftKey: true });
   expect(api.send).not.toHaveBeenCalled();
+});
+
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const pngFile = (name = 'shot.png') => new File([PNG], name, { type: 'image/png' });
+const PNG_B64 = btoa(String.fromCharCode(...PNG));
+
+/** A paste or drop event carrying these files, and words when given. */
+function transfer(kind: 'paste' | 'drop' | 'dragover' | 'dragenter', files: File[], words: Record<string, string> = {}) {
+  const event = new Event(kind, { bubbles: true, cancelable: true });
+  const data = {
+    files,
+    types: [...Object.keys(words), ...(files.length ? ['Files'] : [])],
+    getData: (type: string) => words[type] ?? '',
+    dropEffect: 'none',
+  };
+  Object.defineProperty(event, kind === 'paste' ? 'clipboardData' : 'dataTransfer', { value: data });
+  return event;
+}
+const fire = (el: Element, event: Event) => act(async () => void el.dispatchEvent(event));
+const thumbs = () => [...host.querySelectorAll<HTMLImageElement>('.claude-composer .claude-chip-image img')];
+
+test('a pasted image waits in the chips as a thumbnail, with ×, and goes with the message, which can be the image alone', async () => {
+  await render();
+  const paste = transfer('paste', [pngFile()]);
+  await fire(input(), paste);
+  expect(paste.defaultPrevented).toBe(true);
+  await vi.waitFor(() => expect(thumbs()).toHaveLength(1));
+  expect(thumbs()[0].alt).toBe('Pasted image 1');
+  expect(thumbs()[0].src).toBe(`data:image/png;base64,${PNG_B64}`);
+  expect(button('Send')?.disabled).toBe(false);
+
+  await fire(input(), transfer('paste', [pngFile('two.png')]));
+  await vi.waitFor(() => expect(thumbs().map((i) => i.alt)).toEqual(['Pasted image 1', 'Pasted image 2']));
+  await click(button('Remove pasted image 1'));
+  expect(useClaude.getState().images).toHaveLength(1);
+
+  await click(button('Send'));
+  expect(api.send).toHaveBeenCalledWith({ chatId: null, message: '', references: [], openPageId: 'a', images: [{ type: 'image/png', data: PNG_B64 }] });
+  expect(thumbs()).toHaveLength(0);
+  // The message shows its image at once, before the chat is read back.
+  expect(host.querySelector<HTMLImageElement>('.is-user .claude-msg-image img')?.src).toBe(`data:image/png;base64,${PNG_B64}`);
+});
+
+test('pasted words go in as before; a file of another type is refused with a reason', async () => {
+  await render();
+  const words = transfer('paste', [], { 'text/plain': 'hello' });
+  await fire(input(), words);
+  expect(words.defaultPrevented).toBe(false);
+  // Words copied from a sheet or a document come with a picture of themselves: the words go in.
+  const sheet = transfer('paste', [pngFile()], { 'text/plain': 'a\tb', 'text/html': '<table></table>' });
+  await fire(input(), sheet);
+  expect(sheet.defaultPrevented).toBe(false);
+  expect(useClaude.getState().images).toEqual([]);
+
+  const pdf = transfer('paste', [new File(['%PDF'], 'a.pdf', { type: 'application/pdf' })]);
+  await fire(input(), pdf);
+  expect(pdf.defaultPrevented).toBe(true);
+  expect(host.querySelector('.claude-error')?.textContent).toContain('Only PNG, JPEG, GIF and WebP images can be sent');
+  expect(useClaude.getState().images).toEqual([]);
+});
+
+test('files dragged over the panel light up the box, and dropped images join the message', async () => {
+  await render();
+  const panel = host.querySelector('.claude-panel')!;
+  const over = transfer('dragover', [pngFile()]);
+  await fire(host.querySelector('.claude-scroll')!, over);
+  expect(over.defaultPrevented).toBe(true);
+  expect(panel.classList.contains('is-dropping')).toBe(true);
+  // Words dragged aren't dropped here.
+  const dragWords = transfer('dragover', [], { 'text/plain': 'x' });
+  await fire(panel, dragWords);
+  expect(dragWords.defaultPrevented).toBe(false);
+
+  const drop = transfer('drop', [pngFile(), pngFile('b.png')]);
+  await fire(host.querySelector('.claude-scroll')!, drop);
+  expect(drop.defaultPrevented).toBe(true);
+  expect(panel.classList.contains('is-dropping')).toBe(false);
+  await vi.waitFor(() => expect(thumbs()).toHaveLength(2));
+});
+
+test('a saved image is loaded from main once, with a placeholder until it comes; a missing one says so', async () => {
+  const shown = later<{ type: 'image/png'; data: string } | null>();
+  api.image.mockImplementation((_chat: string, file: string) => (file === 'c1aaaaaa-gone0000.png' ? Promise.resolve(null) : shown.promise));
+  const user: ChatMessage = {
+    id: 'u1',
+    role: 'user',
+    text: 'what is this?',
+    created: 'c',
+    images: [
+      { file: 'c1aaaaaa-abcdefgh.png', type: 'image/png' },
+      { file: 'c1aaaaaa-gone0000.png', type: 'image/png' },
+    ],
+  };
+  useClaude.setState({ chat: chat([user]) });
+  await render();
+  expect(api.image).toHaveBeenCalledWith('c1', 'c1aaaaaa-abcdefgh.png');
+  const tiles = () => [...host.querySelectorAll('.is-user .claude-msg-image')];
+  expect(tiles()[0].classList.contains('is-loading')).toBe(true);
+  expect(tiles()[1].textContent).toBe('Image missing');
+
+  await act(async () => shown.resolve({ type: 'image/png', data: 'AAAA' }));
+  expect(tiles()[0].querySelector('img')?.src).toBe('data:image/png;base64,AAAA');
+
+  // Shown again, it's known.
+  api.image.mockClear();
+  await act(async () => useClaude.setState({ chat: { ...chat([user]) } }));
+  act(() => root.unmount());
+  root = createRoot(host);
+  await render();
+  expect(tiles()[0].querySelector('img')?.src).toBe('data:image/png;base64,AAAA');
+  expect(api.image).not.toHaveBeenCalledWith('c1', 'c1aaaaaa-abcdefgh.png');
+});
+
+test('an image in a message opens larger over the window; Escape or a click closes it and focus goes back', async () => {
+  const user: ChatMessage = { id: 'local-1', role: 'user', text: '', created: 'c' };
+  useClaude.setState({ chat: chat([user]), localImages: { 'local-1': ['data:image/png;base64,AAAA'] } });
+  await render();
+  const thumb = host.querySelector<HTMLButtonElement>('.claude-msg-image')!;
+  // An image alone has no line of words under it.
+  expect(host.querySelector('.is-user .claude-plain')).toBeNull();
+  await click(thumb);
+  const viewer = () => document.querySelector('.claude-viewer');
+  expect(viewer()?.getAttribute('role')).toBe('dialog');
+  expect(viewer()?.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,AAAA');
+  await act(async () => void document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+  expect(viewer()).toBeNull();
+  expect(document.activeElement).toBe(thumb);
+
+  await click(thumb);
+  await click(viewer());
+  expect(viewer()).toBeNull();
+});
+
+test('a block reference chip reads the block, with its page and place as a tooltip, before and after sending', async () => {
+  const block = { kind: 'block', pageId: 'w', title: 'Weekly levels', text: '{ "type": "paragraph", "text": "Entry at the weekly open" }', where: 'block 4 of 12' } as const;
+  useClaude.setState({ attachments: [block], chat: chat([{ id: 'u1', role: 'user', text: 'why?', created: 'c', references: [block] }]) });
+  await render();
+  const composerChip = [...host.querySelectorAll('.claude-composer .claude-chip')].find((c) => c.textContent?.startsWith('Block'))!;
+  expect([composerChip.querySelector('.claude-chip-label')?.textContent, composerChip.getAttribute('title')]).toEqual(['Block: Entry at the weekly open', 'Weekly levels, block 4 of 12']);
+  const sentChip = host.querySelector('.is-user .claude-chip')!;
+  expect([sentChip.textContent, sentChip.getAttribute('title')]).toEqual(['Block: Entry at the weekly open', 'Weekly levels, block 4 of 12']);
 });

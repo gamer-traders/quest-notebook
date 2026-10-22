@@ -13,6 +13,7 @@ import {
   isWebUrl,
   pagePathFor,
   referenceLabel,
+  referenceTooltip,
   relativeDate,
   undoablePaths,
   withoutQuery,
@@ -190,4 +191,26 @@ test('a reference chip names the page, or where the passage came from', () => {
   expect(referenceLabel({ kind: 'page', pageId: 'a', title: 'Weekly levels' })).toBe('Weekly levels');
   expect(referenceLabel({ kind: 'selection', pageId: 'a', title: 'Weekly levels', text: 'x' })).toBe('Selection from Weekly levels');
   expect(referenceLabel({ kind: 'page', pageId: 'a', title: ' ' })).toBe('Untitled');
+});
+
+test('a block reference chip reads the block, and its tooltip says the page and where', () => {
+  const ref = { kind: 'block', pageId: 'a', title: 'Weekly levels', text: '{ "type": "paragraph", "text": "Entry at the **weekly** open" }', where: 'block 4 of 12' } as const;
+  expect(referenceLabel(ref)).toBe('Block: Entry at the weekly open');
+  expect(referenceTooltip(ref)).toBe('Weekly levels, block 4 of 12');
+  expect(referenceTooltip({ kind: 'selection', pageId: 'a', title: 'W', text: 'x'.repeat(400) })).toBe('x'.repeat(300));
+  expect(referenceTooltip({ kind: 'page', pageId: 'a', title: 'W' })).toBeUndefined();
+});
+
+test("a saved message keeps its block references and images, and leaves out ones it can't draw", () => {
+  const block = { kind: 'block', pageId: 'a', title: 'A', text: '{}', where: 'block 1 of 2' };
+  const message = {
+    id: 'm',
+    role: 'user',
+    text: 'hi',
+    created: 'c',
+    references: [block, { ...block, where: 3 }, { ...block, text: null }],
+    images: [{ file: 'c1abcdef-aaaaaaaa.png', type: 'image/png' }, { file: 'x.bmp', type: 'image/bmp' }, { file: 5, type: 'image/png' }, null, 'x.png'],
+  } as unknown as ChatMessage;
+  expect(drawableMessage(message)).toMatchObject({ references: [block], images: [{ file: 'c1abcdef-aaaaaaaa.png', type: 'image/png' }] });
+  expect(drawableMessage({ ...message, images: 'nope' } as unknown as ChatMessage)).not.toHaveProperty('images');
 });

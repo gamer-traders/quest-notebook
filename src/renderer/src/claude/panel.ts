@@ -1,4 +1,6 @@
-import type { ChatMessage, ChatReference, FileChange } from '@shared/ipc';
+import type { ChatImage, ChatMessage, ChatReference, FileChange } from '@shared/ipc';
+import { blockLabel } from './blockRef';
+import { isImageType } from './images';
 
 // The Claude panel's small rules, kept apart from its components so they can be tested.
 
@@ -115,9 +117,13 @@ const isText = (v: unknown): v is string => typeof v === 'string';
 const isTextOrNone = (v: unknown) => v === undefined || isText(v);
 const kept = <T>(list: unknown, keep: (item: unknown) => boolean): T[] => (Array.isArray(list) ? (list.filter(keep) as T[]) : []);
 
-const isReference = (r: unknown) => isRecord(r) && isText(r.pageId) && isText(r.title) && (r.kind === 'page' || (r.kind === 'selection' && isText(r.text)));
+const isReference = (r: unknown) =>
+  isRecord(r) && isText(r.pageId) && isText(r.title) && (r.kind === 'page' || (r.kind === 'selection' && isText(r.text)) || (r.kind === 'block' && isText(r.text) && isText(r.where)));
 const isAction = (a: unknown) => isRecord(a) && isText(a.verb) && isTextOrNone(a.id) && isTextOrNone(a.path) && isTextOrNone(a.detail);
 const isChange = (c: unknown) => isRecord(c) && isText(c.path) && isTextOrNone(c.pageId);
+// A saved image's name in .quest/chats/images: its chat's id, then its own.
+const IMAGE_FILE = /^[a-z0-9]{8}-[a-z0-9]{8}\.(png|jpg|gif|webp)$/;
+const isImage = (i: unknown) => isRecord(i) && isText(i.file) && IMAGE_FILE.test(i.file) && isImageType(i.type);
 
 /**
  * A saved message as the panel can draw it. A damaged chat file can hold anything, such as a list that isn't one
@@ -125,6 +131,7 @@ const isChange = (c: unknown) => isRecord(c) && isText(c.path) && isTextOrNone(c
  */
 export function drawableMessage(message: ChatMessage): ChatMessage {
   const m = message as unknown as Record<string, unknown>;
+  const images = kept<ChatImage>(m.images, isImage);
   return {
     id: String(m.id),
     role: m.role === 'user' ? 'user' : 'assistant',
@@ -134,12 +141,21 @@ export function drawableMessage(message: ChatMessage): ChatMessage {
     actions: kept(m.actions, isAction),
     changes: kept(m.changes, isChange),
     undone: kept(m.undone, isText),
+    ...(images.length ? { images } : {}),
     ...(isText(m.error) ? { error: m.error } : {}),
   };
 }
 
-/** A reference as its chip says it: the page's title, or where a passage came from. */
+/** A reference as its chip says it: the page's title, where a passage came from, or the block's first words. */
 export function referenceLabel(ref: ChatReference): string {
+  if (ref.kind === 'block') return blockLabel(ref.text);
   const title = ref.title.trim() || 'Untitled';
   return ref.kind === 'page' ? title : `Selection from ${title}`;
+}
+
+/** What a chip shows when pointed at: the start of a passage, or a block's page and where it is on it. */
+export function referenceTooltip(ref: ChatReference): string | undefined {
+  if (ref.kind === 'selection') return ref.text.slice(0, 300);
+  if (ref.kind === 'block') return `${ref.title.trim() || 'Untitled'}, ${ref.where}`;
+  return undefined;
 }

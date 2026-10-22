@@ -1,9 +1,10 @@
 import { create } from 'zustand';
-import type { Chat, ChatAction, ChatMessage, ChatReference, ChatSummary, ClaudeEvent, ClaudeStatus, QuestApi } from '@shared/ipc';
+import type { Chat, ChatAction, ChatMessage, ChatReference, ChatSummary, ClaudeEvent, ClaudeStatus, ImageData, QuestApi } from '@shared/ipc';
 import { useStore } from '../store';
 import type { Notebook } from '../types';
 import { ancestorsOf, displayTitle } from '../page/tree';
 import { changedTitles, conflictQuestion } from './panel';
+import { base64Bytes, cacheImage, cachedImage, checkImages, dataUrlOf } from './images';
 
 type Api = QuestApi['claude'];
 
@@ -75,6 +76,10 @@ interface ClaudeState extends PanelSettings {
   /** Page ids by assistant message id: pages that were open and read-only when Claude changed them. */
   notApplied: Record<string, string[]>;
   attachments: ChatReference[];
+  /** Images pasted or dropped, for the next message. */
+  images: ImageData[];
+  /** A sent message's images as data URLs, by its local id, shown until the chat is read back with the saved ones. */
+  localImages: Record<string, string[]>;
   /** The "This page" chip was removed for the next message. */
   skipOpenPage: boolean;
   error: string | null;
@@ -88,6 +93,9 @@ interface ClaudeState extends PanelSettings {
   deleteChat: (id: string) => Promise<void>;
   attach: (ref: ChatReference) => void;
   detach: (index: number) => void;
+  /** Adds what can go of these images, and says what can't in `error`. */
+  addImages: (list: ImageData[]) => void;
+  removeImage: (index: number) => void;
   setSkipOpenPage: (skip: boolean) => void;
   send: (message: string, openPageId: string | null) => Promise<void>;
   stop: () => void;
@@ -145,6 +153,8 @@ export const useClaude = create<ClaudeState>((set, get) => {
     streaming: emptyStreaming(),
     notApplied: {},
     attachments: [],
+    images: [],
+    localImages: {},
     skipOpenPage: false,
     error: null,
 
@@ -171,7 +181,7 @@ export const useClaude = create<ClaudeState>((set, get) => {
     reset: () => {
       resets++;
       queued = [];
-      set({ chat: null, chats: [], running: null, sending: false, streaming: emptyStreaming(), attachments: [], skipOpenPage: false, notApplied: {}, error: null });
+      set({ chat: null, chats: [], running: null, sending: false, streaming: emptyStreaming(), attachments: [], images: [], localImages: {}, skipOpenPage: false, notApplied: {}, error: null });
       if (api) relist().catch(() => {});
     },
 
@@ -192,7 +202,8 @@ export const useClaude = create<ClaudeState>((set, get) => {
       // Shown only if nothing else changed the chat on screen while it was read.
       const now = get();
       if (!chat || choice !== choices || at !== resets || now.sending || (now.running && now.running.chatId !== id) || (now.chat?.id ?? null) !== from) return;
-      set({ chat, error: null });
+      // A chat read from disk has its images saved: the copies of ones just sent aren't needed.
+      set({ chat, error: null, localImages: {} });
     },
 
     deleteChat: async (id) => {
@@ -210,10 +221,19 @@ export const useClaude = create<ClaudeState>((set, get) => {
       persist(get());
     },
     detach: (index) => set((s) => ({ attachments: s.attachments.filter((_, i) => i !== index) })),
+    addImages: (list) => {
+      const { accepted, error } = checkImages(
+        get().images.length,
+        list.map((image) => ({ image, type: image.type as string, size: base64Bytes(image.data) })),
+      );
+      set((s) => ({ images: [...s.images, ...accepted.map((a) => a.image)], ...(error ? { error } : {}) }));
+    },
+    removeImage: (index) => set((s) => ({ images: s.images.filter((_, i) => i !== index) })),
     setSkipOpenPage: (skipOpenPage) => set({ skipOpenPage }),
 
     send: async (message, openPageId) => {
-      if (!api || get().running || get().sending || !message.trim()) return;
+      // Images can go without words.
+      if (!api || get().running || get().sending || (!message.trim() && get().images.length === 0)) return;
       const at = resets;
       set({ sending: true });
       queued = [];
@@ -221,8 +241,14 @@ export const useClaude = create<ClaudeState>((set, get) => {
         await flush();
         // Another workspace opened meanwhile: the reset let go of this message, and the new workspace has its own chats.
         if (at !== resets) return;
-        const { chat, attachments, skipOpenPage } = get();
-        const result = await api.send({ chatId: chat?.id ?? null, message, references: attachments, openPageId: skipOpenPage ? null : openPageId });
+        const { chat, attachments, images, skipOpenPage } = get();
+        const result = await api.send({
+          chatId: chat?.id ?? null,
+          message,
+          references: attachments,
+          openPageId: skipOpenPage ? null : openPageId,
+          ...(images.length ? { images } : {}),
+        });
         if (at !== resets) return;
         if ('error' in result) {
           queued = [];
@@ -232,12 +258,16 @@ export const useClaude = create<ClaudeState>((set, get) => {
         }
         const now = new Date().toISOString();
         const user: ChatMessage = { id: `local-${now}`, role: 'user', text: message, created: now, ...(attachments.length ? { references: attachments } : {}) };
+        // Images can be pasted while the message is on its way: only those sent are cleared.
+        const left = get().images.filter((i) => !images.includes(i));
         const base: Chat = chat ?? { id: result.chatId, title: message.slice(0, 60), sessionId: null, created: now, updated: now, messages: [] };
         set({
           running: { chatId: result.chatId, messageId: result.messageId, lockedPageId: openPageId },
           sending: false,
           chat: { ...base, id: result.chatId, messages: [...base.messages, user] },
           attachments: [],
+          images: left,
+          localImages: images.length ? { ...get().localImages, [user.id]: images.map(dataUrlOf) } : get().localImages,
           skipOpenPage: false,
           error: null,
           streaming: emptyStreaming(),
@@ -276,6 +306,7 @@ export const useClaude = create<ClaudeState>((set, get) => {
       } else {
         // The reply shows at once, so it doesn't blink out while the saved chat is read back.
         const cur = get().chat;
+        const asked = cur?.id === e.chatId && Array.isArray(cur.messages) ? cur.messages.filter((m) => m?.role === 'user').at(-1) : undefined;
         set({
           running: null,
           streaming: emptyStreaming(),
@@ -288,7 +319,10 @@ export const useClaude = create<ClaudeState>((set, get) => {
           } catch {
             chat = null;
           }
-          if (chat && get().chat?.id === e.chatId) set({ chat });
+          if (chat && get().chat?.id === e.chatId) {
+            if (asked) knowSavedImages(chat, e.message.id, get().localImages[asked.id]);
+            set({ chat, localImages: {} });
+          }
           try {
             await relist();
           } catch {
@@ -325,6 +359,34 @@ export const useClaude = create<ClaudeState>((set, get) => {
     },
   };
 });
+
+/**
+ * The images of the message a reply answered, as saved, are the ones just sent: their data URLs are kept by file,
+ * so the message shows them without asking main for them again.
+ */
+function knowSavedImages(chat: Chat, replyId: string, urls: string[] | undefined): void {
+  if (!urls || !Array.isArray(chat.messages)) return;
+  const at = chat.messages.findIndex((m) => m?.id === replyId);
+  const asked = at > 0 ? chat.messages[at - 1] : undefined;
+  const saved = asked?.role === 'user' && Array.isArray(asked.images) ? asked.images : [];
+  if (saved.length !== urls.length) return;
+  saved.forEach((image, i) => {
+    if (typeof image?.file === 'string') cacheImage(`${chat.id}/${image.file}`, urls[i]);
+  });
+}
+
+/** A saved image as a data URL, or null when it's gone. Loaded once, then kept. */
+export async function loadSavedImage(chatId: string, file: string): Promise<string | null> {
+  const key = `${chatId}/${file}`;
+  const known = cachedImage(key);
+  if (known !== undefined) return known;
+  if (!api) return null;
+  const image = await api.image(chatId, file);
+  if (!image) return null;
+  const url = dataUrlOf(image);
+  cacheImage(key, url);
+  return url;
+}
 
 /** True for the page a running turn started on: it stays read-only until the turn ends. */
 export const isLocked = (state: Pick<ClaudeState, 'running'>, pageId: string | null | undefined): boolean =>

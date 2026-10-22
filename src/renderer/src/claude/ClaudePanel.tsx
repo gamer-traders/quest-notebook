@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type DragEvent,
   type KeyboardEvent,
   type PointerEvent,
   type ReactNode,
@@ -16,7 +17,7 @@ import {
 import type { Chat, ChatReference, ClaudeStatus } from '@shared/ipc';
 import { useStore } from '../store';
 import { IS_MAC } from '../components/SettingsDialog';
-import { Composer, focusPage, type ComposerHandle } from './Composer';
+import { Composer, addImageFiles, focusPage, type ComposerHandle } from './Composer';
 import { MessageView, StreamingReply, report, usePageIndex } from './MessageView';
 import { claudeShortcutLabel, relativeDate } from './panel';
 import { MAX_WIDTH, MIN_WIDTH, useClaude } from './store';
@@ -283,6 +284,7 @@ const Conversation = memo(function Conversation({ composer }: { composer: RefObj
   };
 
   const messages = chat?.messages ?? [];
+  const chatId = chat?.id ?? '';
   const busy = running !== null || sending;
   const streaming = running !== null && chat?.id === running.chatId;
 
@@ -294,7 +296,7 @@ const Conversation = memo(function Conversation({ composer }: { composer: RefObj
         ) : (
           <ol className="claude-messages">
             {messages.map((m) => (
-              <MessageView key={m.id} message={m} pages={pages} notApplied={notApplied[m.id]} busy={busy} />
+              <MessageView key={m.id} chatId={chatId} message={m} pages={pages} notApplied={notApplied[m.id]} busy={busy} />
             ))}
             {streaming && <StreamingReply pages={pages} onGrow={toBottom} />}
           </ol>
@@ -358,6 +360,8 @@ export function ClaudePanel() {
   const drag = useRef<{ x: number; from: number; to: number | null } | null>(null);
   const panel = useRef<HTMLElement>(null);
   const composer = useRef<ComposerHandle>(null);
+  // Files are being dragged over the panel: the message box shows where they'd go.
+  const [dropping, setDropping] = useState(false);
   const width = dragWidth ?? storedWidth;
   const ready = status?.state === 'ready';
 
@@ -408,8 +412,37 @@ export function ClaudePanel() {
     composer.current?.focus();
   };
 
+  // Files dropped anywhere on the panel join the message, once there's a message box for them. Words dragged aren't.
+  const carriesFiles = (e: DragEvent) => ready && [...(e.dataTransfer?.types ?? [])].includes('Files');
+  const onDragOver = (e: DragEvent<HTMLElement>) => {
+    if (!carriesFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    setDropping(true);
+  };
+  const onDragLeave = (e: DragEvent<HTMLElement>) => {
+    if (!panel.current?.contains(e.relatedTarget as Node | null)) setDropping(false);
+  };
+  const onDrop = (e: DragEvent<HTMLElement>) => {
+    setDropping(false);
+    if (!carriesFiles(e)) return;
+    e.preventDefault();
+    const files = [...e.dataTransfer.files];
+    if (files.length) void addImageFiles(files);
+  };
+
+  const classes = `claude-panel${dragWidth !== null ? ' is-resizing' : ''}${dropping ? ' is-dropping' : ''}`;
   return (
-    <aside ref={panel} className={`claude-panel${dragWidth !== null ? ' is-resizing' : ''}`} aria-label="Claude" style={{ '--claude-width': `${width}px` } as CSSProperties}>
+    <aside
+      ref={panel}
+      className={classes}
+      aria-label="Claude"
+      style={{ '--claude-width': `${width}px` } as CSSProperties}
+      onDragEnter={onDragOver}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
       <div
         className="claude-resize"
         role="separator"

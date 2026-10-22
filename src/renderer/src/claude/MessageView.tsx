@@ -1,12 +1,14 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { ChatAction, ChatMessage, FileChange } from '@shared/ipc';
+import type { ChatAction, ChatImage, ChatMessage, FileChange } from '@shared/ipc';
 import { useStore } from '../store';
 import { displayTitle } from '../page/tree';
 import { actionLabel } from './labels';
-import { changeVerb, drawableMessage, errorText, isWebUrl, pagePathFor, referenceLabel, undoablePaths } from './panel';
-import { useClaude } from './store';
+import { changeVerb, drawableMessage, errorText, isWebUrl, pagePathFor, referenceLabel, referenceTooltip, undoablePaths } from './panel';
+import { cachedImage } from './images';
+import { loadSavedImage, useClaude } from './store';
 
 /** Shows a call to main that failed, above the message box. */
 export function report(p: Promise<unknown>): void {
@@ -176,7 +178,7 @@ function References({ message }: { message: ChatMessage }) {
   return (
     <ul className="claude-chips" aria-label="Attached">
       {refs.map((r, i) => (
-        <li key={`${r.pageId}-${i}`} className="claude-chip" title={r.kind === 'selection' ? r.text.slice(0, 300) : undefined}>
+        <li key={`${r.pageId}-${i}`} className="claude-chip" title={referenceTooltip(r)}>
           {referenceLabel(r)}
         </li>
       ))}
@@ -184,7 +186,121 @@ function References({ message }: { message: ChatMessage }) {
   );
 }
 
+/** An image over the whole window, fitted to it. Escape or a click anywhere closes it. */
+function ImageViewer({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
+  const scrim = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    scrim.current?.focus();
+    // Caught before anything else on the page hears it: Escape here only closes the image.
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key !== 'Escape' && e.key !== 'Tab') return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [onClose]);
+  return createPortal(
+    <div ref={scrim} className="claude-viewer" role="dialog" aria-modal="true" aria-label={alt} tabIndex={-1} onClick={onClose}>
+      <img src={src} alt={alt} />
+    </div>,
+    document.body,
+  );
+}
+
+interface Viewing {
+  src: string;
+  alt: string;
+  /** Where focus goes back to. */
+  from: HTMLElement;
+}
+
+/** A message's image, small: it opens larger. */
+function Thumb({ src, alt, onOpen }: { src: string; alt: string; onOpen: (v: Viewing) => void }) {
+  return (
+    <button type="button" className="claude-msg-image" title="View larger" onClick={(e) => onOpen({ src, alt, from: e.currentTarget })}>
+      <img src={src} alt={alt} />
+    </button>
+  );
+}
+
+/** A saved image, asked of main once and then kept. A blank tile stands in until it comes. */
+function SavedImage({ chatId, image, alt, onOpen }: { chatId: string; image: ChatImage; alt: string; onOpen: (v: Viewing) => void }) {
+  const key = `${chatId}/${image.file}`;
+  const [loaded, setLoaded] = useState<{ key: string; url: string | null } | null>(() => {
+    const url = cachedImage(key);
+    return url === undefined ? null : { key, url };
+  });
+  // Undefined while it loads, null when it's gone.
+  const url = loaded?.key === key ? loaded.url : cachedImage(key);
+
+  useEffect(() => {
+    if (cachedImage(key) !== undefined) return;
+    let live = true;
+    loadSavedImage(chatId, image.file).then(
+      (found) => live && setLoaded({ key, url: found }),
+      () => live && setLoaded({ key, url: null }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [chatId, image.file, key]);
+
+  if (url === undefined) return <span className="claude-msg-image is-loading" role="img" aria-label={`${alt}, loading`} />;
+  if (url === null) return <span className="claude-msg-image is-missing">Image missing</span>;
+  return <Thumb src={url} alt={alt} onOpen={onOpen} />;
+}
+
+/**
+ * The images sent with a message: the copies kept from sending it, until the chat is read back with the saved ones.
+ */
+function MessageImages({ chatId, message }: { chatId: string; message: ChatMessage }) {
+  const local = useClaude((s) => s.localImages[message.id]);
+  const [viewing, setViewing] = useState<Viewing | null>(null);
+  const close = useCallback(() => {
+    if (viewing?.from.isConnected) viewing.from.focus();
+    setViewing(null);
+  }, [viewing]);
+  const saved = message.images ?? [];
+  if (!local && saved.length === 0) return null;
+  const alt = (i: number) => `Image ${i + 1}`;
+  return (
+    <>
+      <ul className="claude-msg-images" aria-label="Images">
+        {local
+          ? local.map((src, i) => (
+              <li key={i}>
+                <Thumb src={src} alt={alt(i)} onOpen={setViewing} />
+              </li>
+            ))
+          : saved.map((image, i) => (
+              <li key={image.file}>
+                <SavedImage chatId={chatId} image={image} alt={alt(i)} onOpen={setViewing} />
+              </li>
+            ))}
+      </ul>
+      {viewing && <ImageViewer src={viewing.src} alt={viewing.alt} onClose={close} />}
+    </>
+  );
+}
+
+/** The owner's message: what went with it, its images, and its words. */
+function UserMessage({ chatId, message }: { chatId: string; message: ChatMessage }) {
+  const hasImages = useClaude((s) => s.localImages[message.id] !== undefined) || (message.images?.length ?? 0) > 0;
+  return (
+    <li className="claude-msg is-user">
+      <References message={message} />
+      <MessageImages chatId={chatId} message={message} />
+      {/* A message of images alone has no line of words. */}
+      {(message.text || !hasImages) && <p className="claude-plain">{message.text}</p>}
+    </li>
+  );
+}
+
 interface MessageProps {
+  /** The chat it's in, whose saved images it shows. */
+  chatId: string;
   message: ChatMessage;
   pages: PageIndex;
   notApplied: string[] | undefined;
@@ -192,17 +308,10 @@ interface MessageProps {
 }
 
 /** One message: the owner's on a highlighter tint, Claude's on paper, with what it did and changed. */
-export const MessageView = memo(function MessageView({ message: saved, pages, notApplied, busy }: MessageProps) {
+export const MessageView = memo(function MessageView({ chatId, message: saved, pages, notApplied, busy }: MessageProps) {
   // Read from a file that may be damaged: only what can be drawn is.
   const message = drawableMessage(saved);
-  if (message.role === 'user') {
-    return (
-      <li className="claude-msg is-user">
-        <References message={message} />
-        <p className="claude-plain">{message.text}</p>
-      </li>
-    );
-  }
+  if (message.role === 'user') return <UserMessage chatId={chatId} message={message} />;
   return (
     <li className="claude-msg is-reply">
       {message.text && <ReplyText text={message.text} />}
