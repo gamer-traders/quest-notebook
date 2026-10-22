@@ -189,7 +189,22 @@ export interface QuestApi {
     deleteChat(id: string): Promise<void>;
     /** Puts back what a reply changed: the given paths, or all of them for null. `force` overwrites files changed since. */
     undo(chatId: string, messageId: string, paths: string[] | null, force: boolean): Promise<UndoResult>;
+    /** An image saved with a chat's message, by its file name. Null when it's gone or the name isn't one of that chat's. */
+    image(chatId: string, file: string): Promise<ImageData | null>;
   };
+}
+
+/** The image types Claude can see. */
+export const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
+export type ImageType = (typeof IMAGE_TYPES)[number];
+/** At most this many images per message, each at most this many bytes. */
+export const MAX_IMAGES = 10;
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+/** An image's bytes, as base64 without a `data:` prefix. */
+export interface ImageData {
+  type: ImageType;
+  data: string;
 }
 
 /** A message for Claude. `chatId` null starts a new chat. `openPageId` is the page open in the window, if any. */
@@ -198,6 +213,8 @@ export interface SendRequest {
   message: string;
   references: ChatReference[];
   openPageId: string | null;
+  /** Images pasted or dropped into the message. */
+  images?: ImageData[];
 }
 
 /**
@@ -230,8 +247,20 @@ export interface UndoResult {
   conflicts: string[];
 }
 
-/** What a chat message pointed Claude at: a whole page, or a passage of it. */
-export type ChatReference = { kind: 'page'; pageId: string; title: string } | { kind: 'selection'; pageId: string; title: string; text: string };
+/**
+ * What a chat message pointed Claude at: a whole page, a passage of it, or blocks of it. A block reference's `text` is
+ * the blocks as they're written in the page file (JSON), and `where` says where they sit on the page, in words.
+ */
+export type ChatReference =
+  | { kind: 'page'; pageId: string; title: string }
+  | { kind: 'selection'; pageId: string; title: string; text: string }
+  | { kind: 'block'; pageId: string; title: string; text: string; where: string };
+
+/** An image saved with a message, in .quest/chats/images/. `file` is its name there: `<chat id>-<8 letters or digits>.<ext>`. */
+export interface ChatImage {
+  file: string;
+  type: ImageType;
+}
 
 export interface ChatMessage {
   id: string;
@@ -239,6 +268,7 @@ export interface ChatMessage {
   text: string;
   created: string;
   references?: ChatReference[];
+  images?: ChatImage[];
   actions?: ChatAction[];
   changes?: FileChange[];
   /** Paths of the changes that were undone. */

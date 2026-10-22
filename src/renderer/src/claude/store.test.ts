@@ -40,6 +40,7 @@ beforeEach(() => {
     readChat: vi.fn(async () => null),
     deleteChat: vi.fn(async () => {}),
     undo: vi.fn(async () => ({ undone: [], conflicts: [] })),
+    image: vi.fn(async () => null),
   };
   flush = vi.fn(async () => {});
   confirm = vi.fn(() => true);

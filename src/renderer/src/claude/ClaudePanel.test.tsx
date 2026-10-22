@@ -43,6 +43,7 @@ beforeEach(() => {
     readChat: vi.fn(async () => null),
     deleteChat: vi.fn(async () => {}),
     undo: vi.fn(async () => ({ undone: [], conflicts: [] })),
+    image: vi.fn(async () => null),
   };
   bindClaude(api as unknown as Api, { flush: async () => {}, confirm: () => true });
   useStore.setState({ notebooks: [page('a', 'Support and resistance', A), page('w', 'Weekly levels', W)], spaces: [{ id: 'sm', name: 'Markets' }], activeId: 'a', view: 'notebook' });

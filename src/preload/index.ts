@@ -55,6 +55,7 @@ const api: QuestApi = {
     readChat: (id) => ipcRenderer.invoke('claude:read', id),
     deleteChat: (id) => ipcRenderer.invoke('claude:delete', id),
     undo: (chatId, messageId, paths, force) => ipcRenderer.invoke('claude:undo', chatId, messageId, paths, force),
+    image: (chatId, file) => ipcRenderer.invoke('claude:image', chatId, file),
   },
 };
 
