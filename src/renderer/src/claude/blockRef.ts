@@ -90,12 +90,13 @@ function plain(markup: string): string {
 
 const SHOWN = 40;
 
-/** What a block is, when it has no words: "chart BTCUSDT 4h", "tradePlan long". */
+/** What a block is, when it has no words: "trading chart BTCUSDT 4h", "tradePlan long". */
 function kindOf(block: Record<string, unknown>): string {
   const type = words(block.type);
+  const name = type === 'chart' ? 'trading chart' : type;
   const detail =
     type === 'chart' ? [words(block.name) || words(block.symbol), words(block.interval)] : type === 'tradePlan' ? [words(block.side)] : type === 'prediction' ? [words(block.direction)] : [];
-  return [type, ...detail].filter(Boolean).join(' ');
+  return [name, ...detail].filter(Boolean).join(' ');
 }
 
 /** A block reference's chip: "Block: " and its first words, or what it is. Several go by the first. */

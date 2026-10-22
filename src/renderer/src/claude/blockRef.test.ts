@@ -126,7 +126,7 @@ test("a block's chip reads its first words, or what it is", () => {
   const label = (ids: string[]) => blockLabel(blockReference(page, ids, linkText)!.text);
   expect(label(['p1'])).toBe('Block: Entry at the weekly open');
   expect(label(['l1'])).toBe('Block: See Monday prep');
-  expect(label(['c1'])).toBe('Block: chart BTCUSDT 4h');
+  expect(label(['c1'])).toBe('Block: trading chart BTCUSDT 4h');
   expect(label(['k1'])).toBe('Block: tradePlan long');
   expect(label(['h1', 'c1'])).toBe('Blocks: Plan');
   expect(blockLabel('{ "type": "paragraph", "text": "" }')).toBe('Block: paragraph');

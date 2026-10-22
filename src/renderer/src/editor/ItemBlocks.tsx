@@ -111,7 +111,7 @@ export const ChartBlock = createReactBlockSpec(
         <ChartBlockView blockId={block.id} />
       </ItemFrame>
     ),
-    toExternalHTML: ({ block }) => <ItemSummary blockId={block.id} label="Chart" />,
+    toExternalHTML: ({ block }) => <ItemSummary blockId={block.id} label="Trading chart" />,
   },
 );
 

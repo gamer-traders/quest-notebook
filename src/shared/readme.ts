@@ -1,5 +1,5 @@
 /** Which version of the README this is. A README an earlier app version wrote is replaced by this one. */
-export const README_MARKER = '<!-- quest-notebook-readme: 3 -->';
+export const README_MARKER = '<!-- quest-notebook-readme: 4 -->';
 
 /** The README.md written into a new workspace: the file format, for the people and AI tools that open the folder. */
 export const WORKSPACE_README = `# Quest Notebook workspace
@@ -76,7 +76,7 @@ README.md                     this file
 | \`callout\` | \`text\`: a note set apart |
 | \`divider\` | none |
 | \`code\` | \`language\`, \`code\`: raw text, with no markup |
-| \`chart\` | see below |
+| \`chart\` | a trading chart: see below |
 | \`tradePlan\` | \`id\`, \`side\` (\`long\` or \`short\`), \`entry\`, \`stop\`, \`target\` (numbers or \`null\`), \`reason\` |
 | \`prediction\` | \`id\`, \`direction\` (\`up\` or \`down\`), \`bars\` (how many candles later it's checked), \`reason\` |
 
@@ -84,7 +84,7 @@ README.md                     this file
 - **Plans and predictions** are checked against the nearest chart above them on the page.
 - **Unknown block types** are kept as code blocks holding their JSON, so nothing is lost.
 
-### Charts
+### Trading charts
 
 | field | meaning |
 |---|---|

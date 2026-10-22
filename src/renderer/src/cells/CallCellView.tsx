@@ -20,7 +20,7 @@ export function CallCellView({ notebookId, cell, chart }: Props) {
 
   let outcome;
   if (!chart) {
-    outcome = <Outcome tone="neutral" title="No chart to check against">Add a chart above this prediction.</Outcome>;
+    outcome = <Outcome tone="neutral" title="No trading chart to check against">Add a trading chart above this prediction.</Outcome>;
   } else if (!chart.revealed) {
     outcome = <Outcome tone="locked" title="Call locked in">Press What happened next? on the chart to check it.</Outcome>;
   } else if (bars.data) {

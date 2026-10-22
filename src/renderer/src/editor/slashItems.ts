@@ -53,16 +53,16 @@ export function pageSlashItems(editor: PageEditor, notebookId: string): DefaultR
 
   const items: DefaultReactSuggestionItem[] = [
     {
-      title: 'Chart',
+      title: 'Trading chart',
       subtext: 'Candles to study and mark up',
-      aliases: ['chart', 'candles', 'price', 'graph'],
+      aliases: ['trading', 'chart', 'candles', 'price', 'graph'],
       group: ITEM_GROUP,
       icon: ICONS.chart,
       onItemClick: () => insertItem(editor, notebookId, 'chart'),
     },
     {
       title: 'Trade plan',
-      subtext: 'Entry, stop and target, tested on the chart above',
+      subtext: 'Entry, stop and target, tested on the trading chart above',
       aliases: ['plan', 'trade', 'entry', 'stop', 'target'],
       group: ITEM_GROUP,
       icon: ICONS.plan,
@@ -70,7 +70,7 @@ export function pageSlashItems(editor: PageEditor, notebookId: string): DefaultR
     },
     {
       title: 'Prediction',
-      subtext: 'Up or down, checked on the chart above',
+      subtext: 'Up or down, checked on the trading chart above',
       aliases: ['prediction', 'call', 'forecast', 'guess'],
       group: ITEM_GROUP,
       icon: ICONS.call,

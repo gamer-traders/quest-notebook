@@ -48,7 +48,7 @@ export function ReviewView() {
 
   const graded = rows.map((row) => {
     const { chart, cell } = row;
-    if (!chart) return { row, verdict: { tone: 'neutral', text: 'No chart above' } as Verdict };
+    if (!chart) return { row, verdict: { tone: 'neutral', text: 'No trading chart above' } as Verdict };
     if (!chart.revealed) return { row, verdict: { tone: 'locked', text: 'Not revealed yet' } as Verdict };
     const data = isCustom(chart) ? customBarSet(chart.candles ?? [], chart.asOf) : bars.get(barsKey(chart.symbol, chart.interval, chart.asOf))?.data;
     if (!data) return { row, verdict: { tone: 'waiting', text: 'Loading…' } as Verdict };
@@ -102,7 +102,7 @@ export function ReviewView() {
         <table className="review-table">
           <thead>
             <tr>
-              <th scope="col">Chart</th>
+              <th scope="col">Trading chart</th>
               <th scope="col">What you said</th>
               <th scope="col">Result</th>
               <th scope="col">
@@ -122,7 +122,7 @@ export function ReviewView() {
                     }`;
               return (
                 <tr key={cell.id}>
-                  <td data-label="Chart">
+                  <td data-label="Trading chart">
                     <strong>{chart ? chartTitle(chart) : '–'}</strong>
                     <span className="sub">
                       {chart
