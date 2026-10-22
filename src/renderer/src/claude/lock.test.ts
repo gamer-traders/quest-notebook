@@ -132,19 +132,21 @@ describe('the open page', () => {
     expect(shown()).toEqual(unlocked);
   });
 
-  test("a page holding the one Claude is working on can't be deleted, since its sub-pages go with it", async () => {
+  test("a page holding the one Claude is working on can't be deleted or renamed, since that would trash or move it", async () => {
     const child: Notebook = { ...page, id: 'b', title: 'Monday', parentId: 'a', blocks: [], items: {} };
     act(() => useStore.setState({ notebooks: [page, child] }));
     const remove = () => [...host.querySelectorAll<HTMLButtonElement>('.notebook-meta button')].find((b) => b.textContent?.startsWith('Delete page'))!;
+    const title = () => host.querySelector<HTMLInputElement>('.notebook-title')!;
     expect(remove().textContent).toBe('Delete page and 1 sub-page');
-    expect(remove().disabled).toBe(false);
+    expect([remove().disabled, title().readOnly, title().title]).toEqual([false, false, '']);
     await lockedOn('b');
-    expect(remove().disabled).toBe(true);
-    expect(shown()).toEqual(unlocked);
+    expect([remove().disabled, title().readOnly, title().title]).toEqual([true, true, 'Claude is working on one of its sub-pages']);
+    // The rest of the page takes edits as usual.
+    expect(shown()).toEqual({ ...unlocked, titleReadOnly: true });
     await lockedOn('a');
-    expect(remove().disabled).toBe(true);
+    expect([remove().disabled, title().readOnly]).toEqual([true, true]);
     await lockedOn(null);
-    expect(remove().disabled).toBe(false);
+    expect([remove().disabled, title().readOnly, title().title]).toEqual([false, false, '']);
   });
 
   const select = (from: number, to: number) =>

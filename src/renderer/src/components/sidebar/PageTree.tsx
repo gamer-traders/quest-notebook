@@ -151,12 +151,15 @@ export function PageTree({ onNavigate }: { onNavigate: () => void }) {
     return new Map(notebooks.filter((nb) => parents.has(nb.id)).map((nb) => [nb.id, descendantIds(notebooks, nb.id).length]));
   }, [notebooks]);
 
-  // While Claude works on a page, the sidebar doesn't rename, move or delete it, nor delete a page or space it's
-  // in, which would trash it with them. Each is checked again when chosen, for a turn that started meanwhile.
+  // While Claude works on a page, the sidebar doesn't rename, move or delete it, nor the pages and space it's in:
+  // renaming or moving one of them moves its file too, and deleting one trashes it. Each is checked again when
+  // chosen, for a turn that started meanwhile, such as a rename already being typed.
   const running = useClaude((s) => s.running);
   const branch = useMemo(() => lockedBranch({ running }, notebooks), [running, notebooks]);
   const heldSpace = lockedSpace({ running }, notebooks);
   const lockOf = (id: string) => (isLocked({ running }, id) ? 'page' : branch.has(id) ? 'below' : null);
+  const holdsLockNow = (pageId: string) => lockedBranch(useClaude.getState(), useStore.getState().notebooks).has(pageId);
+  const spaceHoldsLockNow = (spaceId: string) => lockedSpace(useClaude.getState(), useStore.getState().notebooks) === spaceId;
 
   // A page that opens, or moves under collapsed pages, has its ancestors expanded so its row shows,
   // including one opened from search while the tree was swapped out. Not on load: rows collapsed last
@@ -192,8 +195,8 @@ export function PageTree({ onNavigate }: { onNavigate: () => void }) {
       const at = spaces.filter((sp) => sp.id !== item.id).findIndex((sp) => sp.id === zone.id);
       return { kind: 'section', id: zone.id, intent, toIndex: intent === 'before' ? at : at + 1 };
     }
-    // Claude is working on it: it stays where it is until the turn ends.
-    if (isLocked(useClaude.getState(), item.id)) return null;
+    // Claude is working on it, or on a page below it: it stays where it is until the turn ends.
+    if (holdsLockNow(item.id)) return null;
     if (zone.kind === 'head') {
       const index = childrenOf(notebooks, zone.id, null).filter((nb) => nb.id !== item.id).length;
       return { kind: 'head', id: zone.id, target: { spaceId: zone.id, parentId: null, index } };
@@ -224,7 +227,7 @@ export function PageTree({ onNavigate }: { onNavigate: () => void }) {
     setDragging(null);
     if (!done || !item) return;
     if (done.kind === 'section') moveSpace(item.id, done.toIndex);
-    else if (!isLocked(useClaude.getState(), item.id)) movePage(item.id, done.target);
+    else if (!holdsLockNow(item.id)) movePage(item.id, done.target);
   };
 
   /** A page's title or a space's name. */
@@ -264,15 +267,14 @@ export function PageTree({ onNavigate }: { onNavigate: () => void }) {
   };
 
   const askDeletePage = (page: Notebook) => {
-    const { notebooks } = useStore.getState();
-    if (lockedBranch(useClaude.getState(), notebooks).has(page.id)) return;
-    const subPages = descendantIds(notebooks, page.id).length;
+    if (holdsLockNow(page.id)) return;
+    const subPages = descendantIds(useStore.getState().notebooks, page.id).length;
     if (window.confirm(deletePageQuestion(displayTitle(page.title), subPages))) deletePage(page.id);
   };
 
   const askDeleteSpace = (space: Space) => {
     const { notebooks, spaces } = useStore.getState();
-    if (spaces.length <= 1 || lockedSpace(useClaude.getState(), notebooks) === space.id) return;
+    if (spaces.length <= 1 || spaceHoldsLockNow(space.id)) return;
     const pages = notebooks.filter((nb) => nb.spaceId === space.id).length;
     if (window.confirm(deleteSpaceQuestion(space.name, pages))) deleteSpace(space.id);
   };
@@ -308,7 +310,7 @@ export function PageTree({ onNavigate }: { onNavigate: () => void }) {
                 onStartRename={() => setRenaming(`space:${space.id}`)}
                 onRenameDone={(next) => {
                   const name = next?.trim();
-                  if (name) renameSpace(space.id, name);
+                  if (name && !spaceHoldsLockNow(space.id)) renameSpace(space.id, name);
                   setRenaming(null);
                 }}
                 onDelete={() => askDeleteSpace(space)}
@@ -334,7 +336,7 @@ export function PageTree({ onNavigate }: { onNavigate: () => void }) {
                       onAddSubPage={() => go(() => createPage(page.spaceId, page.id))}
                       onStartRename={() => setRenaming(page.id)}
                       onRenameDone={(next) => {
-                        if (next !== null && !isLocked(useClaude.getState(), page.id)) updateNotebook(page.id, { title: next });
+                        if (next !== null && !holdsLockNow(page.id)) updateNotebook(page.id, { title: next });
                         setRenaming(null);
                       }}
                       onMoveTo={() => setMoving(page.id)}

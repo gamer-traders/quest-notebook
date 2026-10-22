@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Notebook, Space } from '../../types';
 import { childrenOf, displayTitle, pathOf, type Target } from '../../page/tree';
 import { useStore } from '../../store';
-import { isLocked, useClaude, useLocked } from '../../claude/store';
+import { lockedBranch, useClaude, useHoldsLock, useLocked } from '../../claude/store';
+import { LOCKED_PAGE, LOCKED_SUB_PAGE } from './labels';
 
 export interface Choice {
   key: string;
@@ -49,8 +50,10 @@ export function MoveToDialog({ pageId, onClose }: { pageId: string; onClose: () 
   const notebooks = useStore((s) => s.notebooks);
   const spaces = useStore((s) => s.spaces);
   const page = notebooks.find((nb) => nb.id === pageId);
-  // A turn that started on the page after the dialog opened: it stays where it is until the reply ends.
-  const locked = useLocked(pageId);
+  // A turn that started after the dialog opened, on this page or one below it, which moving this one would move
+  // too: it stays where it is until the reply ends.
+  const locked = useHoldsLock(pageId);
+  const lockedHere = useLocked(pageId);
   const [query, setQuery] = useState('');
   const dialog = useRef<HTMLDialogElement>(null);
 
@@ -63,7 +66,7 @@ export function MoveToDialog({ pageId, onClose }: { pageId: string; onClose: () 
   const shown = matchingChoices(choices, query);
 
   const pick = (choice: Choice) => {
-    if (isLocked(useClaude.getState(), pageId)) return;
+    if (lockedBranch(useClaude.getState(), useStore.getState().notebooks).has(pageId)) return;
     useStore.getState().movePage(pageId, choice.target);
     onClose();
   };
@@ -96,7 +99,7 @@ export function MoveToDialog({ pageId, onClose }: { pageId: string; onClose: () 
             }
           }}
         />
-        {locked && <p className="muted move-locked">Claude is working on this page. It can move once the reply ends.</p>}
+        {locked && <p className="muted move-locked">{lockedHere ? LOCKED_PAGE : LOCKED_SUB_PAGE}. It can move once the reply ends.</p>}
       </div>
       {shown.length === 0 ? (
         <p className="muted move-empty">Nothing matches “{query}”.</p>

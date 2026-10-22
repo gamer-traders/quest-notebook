@@ -11,7 +11,7 @@ export interface SpaceHeaderProps {
   space: Space;
   /** The last space can't be deleted. */
   onlySpace: boolean;
-  /** Claude is working on a page in this space, which deleting the space would trash. */
+  /** Claude is working on a page in this space, which renaming the space would move and deleting it would trash. */
   holdsLock: boolean;
   /** A page dragged over the header goes to the end of the space. */
   dropInside: boolean;
@@ -43,7 +43,7 @@ export function SpaceHeader(props: SpaceHeaderProps) {
   }, [renaming]);
 
   const items: MenuItem[] = [
-    { label: 'Rename', onSelect: props.onStartRename },
+    { label: 'Rename', onSelect: props.onStartRename, disabled: holdsLock, hint: holdsLock ? LOCKED_SPACE : undefined },
     {
       label: 'Delete space',
       onSelect: props.onDelete,

@@ -22,8 +22,8 @@ export interface PageRowProps {
   /** The line or outline shown while a page is dragged over this row. */
   drop: { intent: Intent; lineDepth: number } | null;
   /**
-   * Claude is working on this page, or on one below it, until the turn ends. The page itself isn't renamed,
-   * moved or dragged meanwhile, and neither one is deleted, since that would trash it.
+   * Claude is working on this page, or on one below it, until the turn ends. Meanwhile neither is renamed, moved,
+   * dragged or deleted: renaming or moving a page moves the files below it too, and deleting it trashes them.
    */
   lock: 'page' | 'below' | null;
   renaming: boolean;
@@ -44,7 +44,7 @@ export function PageRow(props: PageRowProps) {
   const title = displayTitle(page.title);
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const drag = useDraggable({ id: `page:${page.id}`, data: { kind: 'page', id: page.id } satisfies DragItem, disabled: renaming || lock === 'page' });
+  const drag = useDraggable({ id: `page:${page.id}`, data: { kind: 'page', id: page.id } satisfies DragItem, disabled: renaming || lock !== null });
   const dropZone = useDroppable({ id: `row:${page.id}`, data: { accepts: 'page', kind: 'row', id: page.id, depth } satisfies DropZone });
   const rowRef = useCombinedRefs<HTMLElement | null>(drag.setNodeRef, dropZone.setNodeRef);
 
@@ -60,13 +60,13 @@ export function PageRow(props: PageRowProps) {
     }
   }, [renaming]);
 
-  const held = lock === 'page' ? { disabled: true, hint: LOCKED_PAGE } : {};
+  const held = lock === null ? {} : { disabled: true, hint: lock === 'page' ? LOCKED_PAGE : LOCKED_SUB_PAGE };
   const items: MenuItem[] = [
     { label: 'Add sub-page', onSelect: props.onAddSubPage },
     { label: 'Rename', onSelect: props.onStartRename, ...held },
     { label: 'Move to…', onSelect: props.onMoveTo, ...held },
     { label: 'Copy link for [[ ]]', onSelect: props.onCopyLink },
-    { label: deletePageLabel(subPages), onSelect: props.onDelete, danger: true, ...(lock === 'below' ? { disabled: true, hint: LOCKED_SUB_PAGE } : held) },
+    { label: deletePageLabel(subPages), onSelect: props.onDelete, danger: true, ...held },
   ];
 
   const classes = [

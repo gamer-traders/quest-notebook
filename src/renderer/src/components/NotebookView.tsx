@@ -11,7 +11,7 @@ import { IS_MAC } from './SettingsDialog';
 import { Backlinks } from './Backlinks';
 import { PagePath } from './PagePath';
 import { SubPagesPanel } from './SubPagesPanel';
-import { deletePageLabel, deletePageQuestion } from './sidebar/labels';
+import { LOCKED_SUB_PAGE, deletePageLabel, deletePageQuestion } from './sidebar/labels';
 import { UnreadablePage } from './UnreadablePage';
 
 const isItemType = (type: string) => (ITEM_BLOCK_TYPES as readonly string[]).includes(type);
@@ -26,7 +26,7 @@ export function NotebookView() {
   const claudeOpen = useClaude((s) => s.open);
   // Claude is working on this page: it reads, scrolls and follows links, but takes no edits until the turn ends.
   const locked = useLocked(nb?.id);
-  // Nor is it deleted, nor a page above it, which would take it along.
+  // Nor is it deleted or renamed, nor a page above it: deleting one trashes it, and renaming one moves its file.
   const holdsLock = useHoldsLock(nb?.id);
   const titleRef = useRef<HTMLInputElement>(null);
 
@@ -94,7 +94,8 @@ export function NotebookView() {
           value={nb.title}
           placeholder="Untitled"
           aria-label="Notebook title"
-          readOnly={locked}
+          readOnly={holdsLock}
+          title={holdsLock && !locked ? LOCKED_SUB_PAGE : undefined}
           onChange={(e) => updateNotebook(nb.id, { title: e.target.value })}
         />
         <div className="notebook-meta">
