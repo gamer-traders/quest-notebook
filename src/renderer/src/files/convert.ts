@@ -46,9 +46,6 @@ const BLOCK_TO_FILE: Record<string, FileBlock['type']> = {
   codeBlock: 'code',
 };
 
-const plainText = (content: unknown): string =>
-  Array.isArray(content) ? content.map((part) => (part?.type === 'text' && typeof part.text === 'string' ? part.text : '')).join('') : '';
-
 function lookToFile(look: MarkLook): FileLook {
   return {
     ...(look.color ? { color: look.color } : {}),
@@ -117,7 +114,12 @@ function blockToFile(block: PageBlock, items: Notebook['items'], linkText: LinkT
     case 'divider':
       return { type: 'divider' };
     case 'code':
-      return { type: 'code', language: typeof block.props.language === 'string' ? block.props.language : 'text', code: plainText(block.content) };
+      // A code block's code is its own text, kept in its props, never read for marks.
+      return {
+        type: 'code',
+        language: typeof block.props.language === 'string' ? block.props.language : 'text',
+        code: typeof block.props.code === 'string' ? block.props.code : '',
+      };
     case 'bullet':
       return { type: 'bullet', text: text() };
     case 'quote':
@@ -312,7 +314,7 @@ function drawingFromFile(raw: Raw, rawId: string, id: string, ctx: DrawingContex
   return { id, type: 'drawing', height: NEW_HEIGHT, background: 'blank', strokes: [] };
 }
 
-const textContent = (text: string) => (text ? [{ type: 'text' as const, text, styles: {} }] : []);
+const codeBlock = (language: string, code: string, children: PageBlock[]): PageBlock => ({ id: uid(), type: 'codeBlock', props: { language, code }, children });
 
 function blocksFromFile(rawBlocks: unknown, items: Record<string, ItemData>, ctx: DrawingContext): PageBlock[] {
   return list(rawBlocks).map((raw): PageBlock => {
@@ -348,7 +350,7 @@ function blocksFromFile(rawBlocks: unknown, items: Record<string, ItemData>, ctx
       case 'divider':
         return { id: uid(), type: 'divider', props: {}, children };
       case 'code':
-        return { id: uid(), type: 'codeBlock', props: { language: str(raw.language, 'text') }, content: textContent(str(raw.code)), children };
+        return codeBlock(str(raw.language, 'text'), str(raw.code), children);
       case 'chart':
         return itemBlock('chart', chartFromFile);
       case 'tradePlan':
@@ -366,7 +368,7 @@ function blocksFromFile(rawBlocks: unknown, items: Record<string, ItemData>, ctx
       }
       default:
         // Nothing is lost: a block the app doesn't know is shown, and saved, as its own JSON.
-        return { id: uid(), type: 'codeBlock', props: { language: 'json' }, content: textContent(formatJson(raw).trim()), children };
+        return codeBlock('json', formatJson(raw).trim(), children);
     }
   });
 }

@@ -40,7 +40,9 @@ export function inlineText(content: unknown, titleOf: TitleOf): string {
     .join('');
 }
 
+/** A block's words: its text, or a code block's code. */
 export function blockText(block: PageBlock, titleOf: TitleOf): string {
+  if (block.type === 'codeBlock') return typeof block.props.code === 'string' ? block.props.code : '';
   return inlineText(block.content, titleOf);
 }
 

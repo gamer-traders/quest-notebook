@@ -18,7 +18,6 @@ import {
   useEditorState,
 } from '@blocknote/react';
 import { BlockNoteView } from '@blocknote/mantine';
-import type { Transaction } from 'prosemirror-state';
 import '@blocknote/mantine/style.css';
 import './editor.css';
 import type { Notebook } from '../types';
@@ -29,6 +28,7 @@ import { useStore } from '../store';
 import { NotebookContext, useNotebookId } from './NotebookContext';
 import { itemBlocksExtension } from './itemExtension';
 import { LINK_TRIGGER, linkMenuOpensHere, pageExtensions } from './inlineRules';
+import { codeBlockExtension } from './codeFocus';
 import { linkChoices, type LinkChoice } from './linkItems';
 import { insertNotebookLink, linkClosingExtension, LinkMenu } from './NotebookLink';
 import { pageSlashItems } from './slashItems';
@@ -91,9 +91,6 @@ function PageDragHandleMenu() {
 
 const PageSideMenu = () => <SideMenu dragHandleMenu={PageDragHandleMenu} />;
 
-// A '/' in code is part of the code.
-const slashOpensHere = (tr: Transaction) => !tr.selection.$from.parent.type.spec.code;
-
 /** `editable` false makes the page read-only: it can still be scrolled, selected, and its links followed. */
 export function NotebookEditor({ notebook, editable = true }: { notebook: Notebook; editable?: boolean }): JSX.Element {
   const theme = useStore((s) => s.theme);
@@ -103,7 +100,7 @@ export function NotebookEditor({ notebook, editable = true }: { notebook: Notebo
   const editor = useCreateBlockNote({
     schema,
     dictionary,
-    extensions: [itemBlocksExtension(notebookId), linkClosingExtension(notebookId), ...pageExtensions],
+    extensions: [itemBlocksExtension(notebookId), linkClosingExtension(notebookId), codeBlockExtension(), ...pageExtensions],
     pasteHandler: pastePage,
     initialContent: (notebook.blocks.length ? notebook.blocks : [{ type: 'paragraph' }]) as PartialBlock<PageEditor['schema']['blockSchema']>[],
   });
@@ -170,7 +167,8 @@ export function NotebookEditor({ notebook, editable = true }: { notebook: Notebo
         onChange={saver.schedule}
         onContextMenu={onContextMenu}
       >
-        <SuggestionMenuController triggerCharacter="/" getItems={getSlashItems} shouldOpen={slashOpensHere} />
+        {/* A '/' in a code block is typed in its code editor, which the page never sees: the menu can't open there. */}
+        <SuggestionMenuController triggerCharacter="/" getItems={getSlashItems} />
         <SuggestionMenuController
           triggerCharacter={LINK_TRIGGER}
           getItems={getLinkChoices}

@@ -118,6 +118,15 @@ test('positions count blocks as the file has them: a block moved up out of a cha
   expect(blockReference(page, [], linkText)).toBeNull();
 });
 
+test('a code block is sent with its code just as the file has it, and its chip reads the code', () => {
+  const code = 'print("hi")\n\tstop = 61_800  \n';
+  const withCode: Notebook = { ...page, blocks: [...page.blocks, { id: 'cb', type: 'codeBlock', props: { language: 'python', code }, children: [] }] };
+  const ref = blockReference(withCode, ['cb'], linkText)!;
+  expect(JSON.parse(ref.text)).toEqual({ type: 'code', language: 'python', code });
+  expect(ref.where).toBe('block 8 of 8');
+  expect(blockLabel(ref.text)).toBe('Block: print("hi") stop = 61_800');
+});
+
 test("an untitled page's blocks name it as the app does", () => {
   expect(blockReference({ ...page, title: ' ' }, ['p1'], linkText)!.title).toBe('Untitled');
 });

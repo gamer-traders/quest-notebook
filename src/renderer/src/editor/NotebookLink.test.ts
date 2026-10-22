@@ -84,13 +84,8 @@ test('typing [ after anything but [ leaves the menu shut', () => {
   expect(menu()?.show).toBeFalsy();
 });
 
-test('[[ in code stays code', () => {
-  open([{ id: 'c', type: 'codeBlock', content: 'rows' }]);
-  editor.setTextCursorPosition('c', 'end');
-  type('[[');
-  expect(menu()?.show).toBeFalsy();
-  expect(editor.document[0].content).toEqual([{ type: 'text', text: 'rows[[', styles: {} }]);
-});
+// A code block's code is typed in its own editor, which the page never hears from: CodeBlock.test.tsx shows that
+// '[[' typed there opens no menu and makes no link.
 
 test('[[ in inline code stays code', () => {
   open([{ id: 'p', type: 'paragraph', content: [{ type: 'text', text: 'arr', styles: { code: true } }] }]);
@@ -176,11 +171,4 @@ test('[[ and ]] around the current notebook\'s own title stay text', () => {
   editor.setTextCursorPosition('p', 'end');
   type('[[journal: 20 oct 2026]]');
   expect(editor.document[0].content).toEqual([{ type: 'text', text: '[[journal: 20 oct 2026]]', styles: {} }]);
-});
-
-test('[[Title]] in code stays code', () => {
-  open([{ id: 'c', type: 'codeBlock', content: '' }]);
-  editor.setTextCursorPosition('c', 'end');
-  type('[[Support and resistance]]');
-  expect(editor.document[0].content).toEqual([{ type: 'text', text: '[[Support and resistance]]', styles: {} }]);
 });
