@@ -9,7 +9,10 @@ const CSP = [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
+  // Markdown files may show pictures from the web.
+  "img-src 'self' data: blob: https:",
+  // Embed blocks: HTML from its own address (quest-embed:), or a web page.
+  "frame-src quest-embed: https: http:",
   "font-src 'self' data:",
   "connect-src 'self' https://api.binance.com https://data-api.binance.vision",
 ].join('; ');

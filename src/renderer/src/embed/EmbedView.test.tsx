@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, test } from 'vitest';
 import type { EmbedCell, Notebook } from '../types';
 import { useStore } from '../store';
 import { EmbedView } from './EmbedView';
+import { htmlFromEmbedUrl } from '@shared/embedUrl';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -43,7 +44,9 @@ afterEach(() => {
 test('HTML runs its scripts in a frame of its own, which can never reach the app', () => {
   const html = '<p id="x"></p><script>x.textContent = "hi"</script>';
   show(embed({ html }));
-  expect(frame()!.getAttribute('srcdoc')).toBe(html);
+  // Its own address, so it isn't held to the app's own content policy, which would stop its scripts.
+  expect(htmlFromEmbedUrl(frame()!.getAttribute('src')!)).toBe(html);
+  expect(frame()!.hasAttribute('srcdoc')).toBe(false);
   expect(sandbox()).toContain('allow-scripts');
   // With scripts allowed, the app's own origin would let the frame reach into the app.
   expect(sandbox()).not.toContain('allow-same-origin');

@@ -1,12 +1,13 @@
 import { useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import type { EmbedCell } from '../types';
 import { useStore } from '../store';
+import { embedUrl } from '@shared/embedUrl';
 import { MAX_EMBED_HEIGHT, MIN_EMBED_HEIGHT, showableUrl } from './model';
 import './embed.css';
 
-// HTML written into the page runs with no origin of its own: with scripts allowed, the app's origin would let it
-// reach into the app. A web page keeps its own site's origin, which is never the app's, so it works as it does
-// in a browser. Neither can move the app's window.
+// HTML written into the page loads from an address of its own (see shared/embedUrl.ts), and runs with no origin of
+// its own: with scripts allowed, the app's origin would let it reach into the app. A web page keeps its own site's
+// origin, which is never the app's, so it works as it does in a browser. Neither can move the app's window.
 const SANDBOX_HTML = 'allow-scripts allow-forms allow-popups allow-modals';
 const SANDBOX_PAGE = 'allow-scripts allow-same-origin allow-forms allow-popups allow-modals';
 
@@ -68,7 +69,7 @@ export function EmbedView({ notebookId, embed }: { notebookId: string; embed: Em
   let shown;
   if (embed.kind === 'html') {
     shown = embed.html.trim() ? (
-      <iframe className="embed-frame" title="Embedded HTML" sandbox={SANDBOX_HTML} srcDoc={embed.html} style={{ height }} allowFullScreen />
+      <iframe className="embed-frame" title="Embedded HTML" sandbox={SANDBOX_HTML} src={embedUrl(embed.html)} style={{ height }} allowFullScreen />
     ) : (
       <p className="embed-empty">Write HTML, with its CSS and scripts, and choose Done to show it.</p>
     );

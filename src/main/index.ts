@@ -1,11 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { basename, join } from 'node:path';
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, shell } from 'electron';
+import { EMBED_SCHEME } from '@shared/embedUrl';
+import { embedResponse } from './embedProtocol';
 import { registerIpc } from './ipc';
 import { buildMenu } from './menu';
 import { Workspaces } from './workspaces';
 
 const PRODUCT = 'Quest Notebook';
+
+// HTML in an embed block loads from an address of its own, as a web page does. It has to be named before the app is ready.
+protocol.registerSchemesAsPrivileged([{ scheme: EMBED_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
 let win: BrowserWindow | null = null;
 let quitting = false;
@@ -102,6 +107,7 @@ function createWindow(): BrowserWindow {
 
 void app.whenReady().then(async () => {
   app.setName(PRODUCT);
+  protocol.handle(EMBED_SCHEME, (request) => embedResponse(request.url));
   registerIpc(workspaces, getWindow);
   Menu.setApplicationMenu(buildMenu((cmd) => send('app:menu', cmd)));
   await workspaces.openLast();
