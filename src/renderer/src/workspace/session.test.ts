@@ -31,6 +31,7 @@ beforeEach(() => {
       batches.push(batch);
       return { ok: true, paths: {} };
     },
+    saveMarkdown: async () => ({ ok: true }),
     saveUi: async () => {},
     onDiskChange: () => () => {},
     onLost: () => () => {},

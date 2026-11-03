@@ -199,3 +199,32 @@ test('a drawings folder never moves onto a folder that is already there', async 
   expect(await read(root, 'Markets/Foo/drawing-d1.svg')).toBe('<svg>1</svg>');
   expect(await read(root, 'Markets/Bar/drawing-x.svg')).toBe('<svg>x</svg>');
 });
+
+const byPath = <T extends { path: string }>(list: T[] | undefined) => [...(list ?? [])].sort((a, b) => a.path.localeCompare(b.path));
+
+test('Markdown files in spaces and page folders are read, with the page or space they sit in', async () => {
+  const root = await tmpWorkspace({
+    'README.md': '# about the folder',
+    'AGENTS.md': '# guide',
+    '.claude/skills/quest-notebook/SKILL.md': '# skill',
+    'Markets/Plan.md': '# Plan\n\nBuy low.',
+    'Markets/A.json': page('a', 'A'),
+    'Markets/A/Notes.MD': 'notes',
+    'Markets/A/.hidden.md': 'hidden',
+    'Markets/A/folder.md/': '',
+  });
+  const { snapshot } = await scanWorkspace(root);
+  const markets = snapshot.spaces[0].id;
+  expect(byPath(snapshot.markdown)).toEqual([
+    { path: 'Markets/A/Notes.MD', spaceId: markets, parentId: 'a', mtimeMs: expect.any(Number), text: 'notes' },
+    { path: 'Markets/Plan.md', spaceId: markets, parentId: null, mtimeMs: expect.any(Number), text: '# Plan\n\nBuy low.' },
+  ]);
+});
+
+test('a folder of Markdown notes becomes a page holding them', async () => {
+  const root = await tmpWorkspace({ 'Markets/Research/one.md': '1' });
+  const { snapshot } = await scanWorkspace(root);
+  expect(snapshot.pages).toHaveLength(1);
+  expect(snapshot.pages[0]).toMatchObject({ path: 'Markets/Research.json', file: { title: 'Research' } });
+  expect(snapshot.markdown).toEqual([expect.objectContaining({ path: 'Markets/Research/one.md', parentId: snapshot.pages[0].id })]);
+});

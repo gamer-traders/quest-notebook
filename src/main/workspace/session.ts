@@ -1,7 +1,7 @@
-import { mkdir, stat } from 'node:fs/promises';
+import { mkdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { formatJson } from '@shared/formatJson';
-import type { DiskDelta, FlushBatch, FlushResult, UiState, WorkspaceSnapshot } from '@shared/ipc';
+import type { DiskDelta, FlushBatch, FlushResult, MarkdownSave, MarkdownSaveResult, UiState, WorkspaceSnapshot } from '@shared/ipc';
 import { applyFlush } from './apply';
 import { insideRoot, writeFileAtomic } from './paths';
 import { STATE_PATH, scanWorkspace } from './scan';
@@ -98,6 +98,36 @@ export class WorkspaceSession {
       this.known = knownAfterFlush(this.known, fresh);
       const all = [...stale, ...(result.stale ?? [])];
       return all.length ? { ...result, stale: all } : result;
+    });
+  }
+
+  /**
+   * Writes a Markdown file edited in the window. Only a file main found in a space can be written, and never over a
+   * change made on disk since the window read it (`base`): that save is refused as stale, and the file left as it is.
+   */
+  saveMarkdown(save: MarkdownSave): Promise<MarkdownSaveResult> {
+    return this.turn(async (): Promise<MarkdownSaveResult> => {
+      if (this.closed) return { ok: false, error: 'This workspace is closed' };
+      if (typeof save?.path !== 'string' || typeof save.text !== 'string' || typeof save.base !== 'string') return { ok: false, error: 'Not a Markdown save' };
+      if (save.root !== undefined && save.root !== this.root) return { ok: false, error: 'This file belongs to another workspace' };
+      if (!(await this.present())) {
+        this.gone();
+        return { ok: false, error: `Couldn't find ${this.root}` };
+      }
+      if (!this.known.index.markdown.has(save.path)) return { ok: false, error: `${save.path} isn't a Markdown file in this workspace` };
+      try {
+        const abs = insideRoot(this.root, save.path);
+        const current = await readFile(abs, 'utf8').catch(() => null);
+        if (current === null) return { ok: false, error: `Couldn't find ${save.path}` };
+        if (current !== save.base) return { ok: false, stale: true, error: `${save.path} changed on disk` };
+        await writeFileAtomic(abs, save.text);
+        const info = await stat(abs);
+        // Known as written, so the watcher doesn't take it for a change made outside.
+        this.known.index.markdown.set(save.path, { text: save.text, mtimeMs: info.mtimeMs, size: info.size });
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
     });
   }
 

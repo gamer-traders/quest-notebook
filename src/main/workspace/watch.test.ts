@@ -72,7 +72,7 @@ test('a file moved without a new name keeps its title', async () => {
 test('a file deleted outside is removed', async () => {
   const { root, known } = await workspace({ 'Markets/A.json': page('a', 'A'), 'Markets/B.json': page('b', 'B') });
   await rm(join(root, 'Markets/B.json'));
-  expect(await rescan(root, known)).toEqual({ spaces: known.spaces, journalSpaceId: null, pages: [], removed: ['b'] });
+  expect(await rescan(root, known)).toEqual({ spaces: known.spaces, journalSpaceId: null, pages: [], removed: ['b'], markdown: [], removedMarkdown: [] });
 });
 
 test('a new folder at the top is a new space', async () => {
@@ -127,4 +127,24 @@ test('the app’s own drawing writes are quiet', async () => {
   const batch = { spaces: known.spaces, createdSpaces: [], deletedSpaces: [], journalSpaceId: null, deletes: [], saves: [{ id: 'a', spaceId: markets, parentId: null, title: 'A', json: page('a', 'A'), sidecars: { 'drawing-d1.svg': '<svg>new</svg>' } }] };
   await applyFlush(root, known.index, batch, deps);
   expect(await rescan(root, knownAfterFlush(known, batch))).toBeNull();
+});
+
+test('a Markdown file added, edited or deleted outside shows up, and one left alone doesn’t', async () => {
+  const { root, known } = await workspace({ 'Markets/Old.md': 'old', 'Markets/Same.md': 'same' });
+  await writeFile(join(root, 'Markets/Old.md'), 'old, edited');
+  await writeFile(join(root, 'Markets/New.md'), 'new');
+  const delta = await rescan(root, known);
+  expect(delta!.pages).toEqual([]);
+  expect([...delta!.markdown!].sort((a, b) => a.path.localeCompare(b.path))).toEqual([
+    expect.objectContaining({ path: 'Markets/New.md', text: 'new' }),
+    expect.objectContaining({ path: 'Markets/Old.md', text: 'old, edited' }),
+  ]);
+  expect(delta!.removedMarkdown).toEqual([]);
+
+  const after = knownFromScan(await scanWorkspace(root, known.index));
+  await rm(join(root, 'Markets/Old.md'));
+  const gone = await rescan(root, after);
+  expect(gone!.markdown).toEqual([]);
+  expect(gone!.removedMarkdown).toEqual(['Markets/Old.md']);
+  expect(await rescan(root, knownFromScan(await scanWorkspace(root, after.index)))).toBeNull();
 });

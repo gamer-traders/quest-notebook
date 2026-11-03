@@ -1,5 +1,5 @@
 import { dialog, ipcMain, shell, type BrowserWindow } from 'electron';
-import type { FlushBatch, UiState } from '@shared/ipc';
+import type { FlushBatch, MarkdownSave, UiState } from '@shared/ipc';
 import type { Workspaces } from './workspaces';
 
 const isWebLink = (url: unknown): url is string => typeof url === 'string' && /^https?:\/\//i.test(url);
@@ -24,6 +24,9 @@ export function registerIpc(workspaces: Workspaces, getWindow: () => BrowserWind
   });
   ipcMain.handle('workspace:flush', (_e, batch: FlushBatch) =>
     workspaces.session ? workspaces.session.flush(batch) : { ok: false, error: 'No workspace is open', paths: {} },
+  );
+  ipcMain.handle('workspace:markdown', (_e, save: MarkdownSave) =>
+    workspaces.session ? workspaces.session.saveMarkdown(save) : { ok: false, error: 'No workspace is open' },
   );
   ipcMain.handle('workspace:ui', (_e, ui: UiState, root?: string) => workspaces.session?.saveUi(ui, root));
   ipcMain.handle('app:open-external', async (_e, url: unknown) => {

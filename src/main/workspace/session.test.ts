@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import type { DiskDelta } from '@shared/ipc';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -81,6 +81,66 @@ test('saving into a workspace whose folder is gone re-creates nothing and report
     expect(result.ok).toBe(false);
     expect(lost).toBe(`Couldn't find ${root}`);
     await expect(access(root)).rejects.toThrow();
+  } finally {
+    session.close();
+  }
+});
+
+async function markdownSession(files: Record<string, string>) {
+  const root = await mkdtemp(join(tmpdir(), 'quest-md-'));
+  for (const [rel, text] of Object.entries(files)) {
+    await mkdir(join(root, rel, '..'), { recursive: true });
+    await writeFile(join(root, rel), text);
+  }
+  const deltas: DiskDelta[] = [];
+  const session = await WorkspaceSession.open(root, false, { change: (d) => deltas.push(d), lost: () => {} }, async () => {});
+  return { root, session, deltas };
+}
+
+test('a Markdown file is saved as written, and the app’s own save is never reported back as an outside change', async () => {
+  const { root, session, deltas } = await markdownSession({ 'Markets/Notes.md': 'v1' });
+  try {
+    expect(await session.saveMarkdown({ root, path: 'Markets/Notes.md', text: '# v2\n', base: 'v1' })).toEqual({ ok: true });
+    expect(await readFile(join(root, 'Markets/Notes.md'), 'utf8')).toBe('# v2\n');
+    await new Promise((r) => setTimeout(r, 800));
+    expect(deltas).toEqual([]);
+  } finally {
+    session.close();
+  }
+});
+
+test('a Markdown save made from an older version of the file is refused, and the file kept', async () => {
+  const { root, session } = await markdownSession({ 'Markets/Notes.md': 'changed outside' });
+  try {
+    expect(await session.saveMarkdown({ root, path: 'Markets/Notes.md', text: 'mine', base: 'what I opened' })).toMatchObject({ ok: false, stale: true });
+    expect(await readFile(join(root, 'Markets/Notes.md'), 'utf8')).toBe('changed outside');
+  } finally {
+    session.close();
+  }
+});
+
+test.each([
+  ['a file at the top of the workspace', 'README.md'],
+  ['a page file', 'Markets/A.json'],
+  ['a path out of the workspace', '../outside.md'],
+  ['a hidden file', 'Markets/.hidden.md'],
+  ['a file that isn’t there', 'Markets/Missing.md'],
+])('saving %s as Markdown is refused, and nothing is written', async (_, path) => {
+  const { root, session } = await markdownSession({ 'README.md': 'top', 'Markets/A.json': '{"blocks":[]}', 'Markets/.hidden.md': 'h' });
+  try {
+    const before = await readFile(join(root, path), 'utf8').catch(() => null);
+    expect(await session.saveMarkdown({ root, path, text: 'written', base: before ?? '' })).toMatchObject({ ok: false });
+    expect(await readFile(join(root, path), 'utf8').catch(() => null)).toBe(before);
+  } finally {
+    session.close();
+  }
+});
+
+test('a Markdown save meant for another workspace is refused', async () => {
+  const { root, session } = await markdownSession({ 'Markets/Notes.md': 'v1' });
+  try {
+    expect(await session.saveMarkdown({ root: '/somewhere/else', path: 'Markets/Notes.md', text: 'v2', base: 'v1' })).toMatchObject({ ok: false });
+    expect(await readFile(join(root, 'Markets/Notes.md'), 'utf8')).toBe('v1');
   } finally {
     session.close();
   }

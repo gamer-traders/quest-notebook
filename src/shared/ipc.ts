@@ -28,6 +28,29 @@ export interface PageRecord {
   drawings?: Record<string, string>;
 }
 
+/** A Markdown file in a space, or in a page's folder, as main found it. */
+export interface MarkdownRecord {
+  /** Relative to the workspace folder, with '/' between parts. It names the file: Markdown files have no id. */
+  path: string;
+  spaceId: string;
+  /** The page whose folder holds it, or null at the top of its space. */
+  parentId: string | null;
+  mtimeMs: number;
+  text: string;
+}
+
+/** A Markdown file the window edited, written over `base`: the text it was edited from. */
+export interface MarkdownSave {
+  /** The workspace it belongs to. Main refuses it if another workspace is open by now. */
+  root?: string;
+  path: string;
+  text: string;
+  base: string;
+}
+
+/** `stale`: the file changed on disk since the window read it, and was left as it is. */
+export type MarkdownSaveResult = { ok: true } | { ok: false; error: string; stale?: boolean };
+
 /** What the window was showing, kept in .quest/state.json. */
 export interface UiState {
   openPageId: string | null;
@@ -41,6 +64,8 @@ export interface WorkspaceSnapshot {
   spaces: SpaceRecord[];
   journalSpaceId: string | null;
   pages: PageRecord[];
+  /** Missing from an older main. */
+  markdown?: MarkdownRecord[];
   ui: UiState;
   /** True when the folder only just became a workspace. */
   isNew: boolean;
@@ -113,6 +138,10 @@ export interface DiskDelta {
   pages: PageRecord[];
   /** Ids of pages whose files are gone. */
   removed: string[];
+  /** Markdown files added or changed. */
+  markdown?: MarkdownRecord[];
+  /** Paths of Markdown files that are gone. */
+  removedMarkdown?: string[];
 }
 
 export interface RecentWorkspace {
@@ -142,6 +171,8 @@ export interface QuestApi {
   };
   workspace: {
     flush(batch: FlushBatch): Promise<FlushResult>;
+    /** Writes a Markdown file main found in a space. */
+    saveMarkdown(save: MarkdownSave): Promise<MarkdownSaveResult>;
     /** `root` is the workspace the state belongs to: it's dropped if another one is open by now. */
     saveUi(ui: UiState, root?: string): Promise<void>;
     onDiskChange(cb: (delta: DiskDelta) => void): () => void;

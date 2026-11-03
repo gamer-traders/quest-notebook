@@ -3,7 +3,7 @@ import { readdir, readFile, rename, stat } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { formatJson } from '@shared/formatJson';
 import { nameKey } from '@shared/names';
-import { EMPTY_UI, SIDECAR_NAME, type PageRecord, type SpaceRecord, type UiState, type WorkspaceConfig, type WorkspaceSnapshot } from '@shared/ipc';
+import { EMPTY_UI, SIDECAR_NAME, type MarkdownRecord, type PageRecord, type SpaceRecord, type UiState, type WorkspaceConfig, type WorkspaceSnapshot } from '@shared/ipc';
 import { insideRoot, writeFileAtomic } from './paths';
 
 /** What main knows of each file it has seen, so it can tell its own writes from changes made outside. */
@@ -28,6 +28,8 @@ export interface ScanIndex {
   spaceIds: Map<string, string>;
   /** Page id → its file. */
   pages: Map<string, PageEntry>;
+  /** Markdown files in spaces and page folders, by path. */
+  markdown: Map<string, FileState>;
 }
 
 export interface ScanResult {
@@ -97,6 +99,7 @@ async function spaceFolders(root: string, listed: string[]): Promise<string[]> {
 interface Walk {
   root: string;
   pages: PageRecord[];
+  markdown: MarkdownRecord[];
   index: ScanIndex;
   seenIds: Set<string>;
   /** Where each id was last time: a page copied since keeps the original's id in its file, and gives way. */
@@ -198,10 +201,19 @@ async function readDrawings(walk: Walk, record: PageRecord, folder: string | nul
   if (entry) entry.sidecars = sidecars;
 }
 
+/** A Markdown file, as it is: the app only ever writes one when it's edited in the app. */
+async function readMarkdown(walk: Walk, rel: string, spaceId: string, parentId: string | null): Promise<void> {
+  const abs = insideRoot(walk.root, rel);
+  const [text, info] = await Promise.all([readFile(abs, 'utf8'), stat(abs)]);
+  walk.index.markdown.set(rel, { text, mtimeMs: info.mtimeMs, size: info.size });
+  walk.markdown.push({ path: rel, spaceId, parentId, mtimeMs: info.mtimeMs, text });
+}
+
 /** Reads the pages in a folder, and the folders of sub-pages beside them. */
 async function walkFolder(walk: Walk, dir: string, spaceId: string, parentId: string | null): Promise<void> {
   const entries = (await readdir(insideRoot(walk.root, dir), { withFileTypes: true })).filter((e) => !isIgnoredName(e.name));
   const fileNames = entries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.json')).map((e) => e.name).sort(byName);
+  const markdownNames = entries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.md')).map((e) => e.name).sort(byName);
   const folderNames = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort(byName);
 
   const records: PageRecord[] = [];
@@ -228,6 +240,7 @@ async function walkFolder(walk: Walk, dir: string, spaceId: string, parentId: st
   }
 
   walk.pages.push(...records);
+  for (const name of markdownNames) await readMarkdown(walk, `${dir}/${name}`, spaceId, parentId);
   for (const record of records) {
     const base = nameKey(record.path.slice(dir.length + 1, -'.json'.length));
     const folder = folderNames.find((name) => nameKey(name) === base);
@@ -240,14 +253,14 @@ async function walkFolder(walk: Walk, dir: string, spaceId: string, parentId: st
 export async function scanWorkspace(root: string, prev?: ScanIndex): Promise<ScanResult> {
   const config = await readConfig(root);
   const folders = await spaceFolders(root, config.spaces);
-  const index: ScanIndex = { spaceIds: new Map(), pages: new Map() };
+  const index: ScanIndex = { spaceIds: new Map(), pages: new Map(), markdown: new Map() };
   const spaces: SpaceRecord[] = folders.map((name) => {
     const id = prev?.spaceIds.get(name) ?? `s_${newId()}`;
     index.spaceIds.set(name, id);
     return { id, name };
   });
 
-  const walk: Walk = { root, pages: [], index, seenIds: new Set(), prev };
+  const walk: Walk = { root, pages: [], markdown: [], index, seenIds: new Set(), prev };
   for (const space of spaces) await walkFolder(walk, space.name, space.id, null);
 
   const journal = config.journalSpace === null ? undefined : spaces.find((s) => s.name === config.journalSpace);
@@ -258,6 +271,7 @@ export async function scanWorkspace(root: string, prev?: ScanIndex): Promise<Sca
       spaces,
       journalSpaceId: journal?.id ?? null,
       pages: walk.pages,
+      markdown: walk.markdown,
       ui: await readUi(root),
       isNew: false,
     },

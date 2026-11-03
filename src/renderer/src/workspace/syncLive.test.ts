@@ -32,6 +32,7 @@ const api: QuestApi['workspace'] = {
     batches.push(batch);
     return flushResult();
   },
+  saveMarkdown: async () => ({ ok: true }),
   saveUi: async () => {},
   onDiskChange: () => () => {},
   onLost: () => () => {},

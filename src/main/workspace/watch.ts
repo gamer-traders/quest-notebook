@@ -74,8 +74,10 @@ export function diffScans(prev: Known, next: ScanResult): Omit<DiskDelta, 'seq'>
   const present = new Set(next.snapshot.pages.map((p) => p.id));
   const removed = [...prev.index.pages.keys()].filter((id) => !present.has(id));
   const spacesChanged = !sameSpaces(prev.spaces, next.snapshot.spaces) || prev.journalSpaceId !== next.snapshot.journalSpaceId;
-  if (!pages.length && !removed.length && !spacesChanged) return null;
-  return { spaces: next.snapshot.spaces, journalSpaceId: next.snapshot.journalSpaceId, pages, removed };
+  const markdown = (next.snapshot.markdown ?? []).filter((file) => prev.index.markdown.get(file.path)?.text !== file.text);
+  const removedMarkdown = [...prev.index.markdown.keys()].filter((path) => !next.index.markdown.has(path));
+  if (!pages.length && !removed.length && !spacesChanged && !markdown.length && !removedMarkdown.length) return null;
+  return { spaces: next.snapshot.spaces, journalSpaceId: next.snapshot.journalSpaceId, pages, removed, markdown, removedMarkdown };
 }
 
 /**
