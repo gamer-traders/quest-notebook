@@ -30,9 +30,11 @@ const FLAGS = ['bold', 'italic', 'underline', 'strike', 'code'] as const;
 
 const isColor = (value: unknown): value is MarkColor => (MARK_COLORS as unknown[]).includes(value);
 
-function keptStyles(styles: StyledText['styles'] | undefined): Styles {
+/** The editor can't hold code with any other style, or inside a link: code wins over other styles, and a link over code. */
+function keptStyles(styles: StyledText['styles'] | undefined, inLink: boolean): Styles {
+  if (styles?.code === true && !inLink) return { code: true };
   const out: Styles = {};
-  for (const flag of FLAGS) if (styles?.[flag] === true) out[flag] = true;
+  for (const flag of FLAGS) if (flag !== 'code' && styles?.[flag] === true) out[flag] = true;
   if (isColor(styles?.backgroundColor)) out.backgroundColor = styles.backgroundColor;
   return out;
 }
@@ -49,7 +51,7 @@ function normalizeRuns(parts: unknown[], allowLinks: boolean): Inline[] {
     const p = part as { type?: unknown; text?: unknown; styles?: StyledText['styles']; href?: unknown; content?: unknown; props?: unknown };
     if (p.type === 'text') {
       if (typeof p.text !== 'string' || p.text === '') continue;
-      const styles = keptStyles(p.styles);
+      const styles = keptStyles(p.styles, !allowLinks);
       const last = out.at(-1);
       if (last && last.type === 'text' && sameStyles(last.styles as Styles, styles)) out[out.length - 1] = run(last.text + p.text, styles);
       else out.push(run(p.text, styles));

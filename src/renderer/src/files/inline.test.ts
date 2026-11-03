@@ -70,10 +70,22 @@ test('style changes between neighbours', () => {
     t('c', { bold: true, italic: true }),
     t('d', { backgroundColor: 'yellow' }),
     t('e', { backgroundColor: 'red' }),
-    t('f', { code: true, bold: true }),
+    t('f', { code: true }),
     t('g', { strike: true, underline: true }),
   ];
   expect(roundTrip(runs)).toEqual(runs);
+});
+
+test('code inside other marks is plain code, and a link’s words are never code: the editor holds neither', () => {
+  expect(markupToInline('**Meal 1 (`~600 kcal` | ==`50g P`==)**')).toEqual([
+    t('Meal 1 (', { bold: true }),
+    t('~600 kcal', { code: true }),
+    t(' | ', { bold: true }),
+    t('50g P', { code: true }),
+    t(')', { bold: true }),
+  ]);
+  expect(markupToInline('[see `docs`](https://a.io)')).toEqual([{ type: 'link', href: 'https://a.io', content: [t('see docs')] }]);
+  expect(normalizeInline([t('x', { code: true, italic: true, strike: true, underline: true, backgroundColor: 'green' })])).toEqual([t('x', { code: true })]);
 });
 
 test('code keeps everything inside it literal', () => {

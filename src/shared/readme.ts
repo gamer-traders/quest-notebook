@@ -1,5 +1,5 @@
 /** Which version of the README this is. A README an earlier app version wrote is replaced by this one. */
-export const README_MARKER = '<!-- quest-notebook-readme: 7 -->';
+export const README_MARKER = '<!-- quest-notebook-readme: 8 -->';
 
 /** The file format, from the folder's layout on: what the README explains, and the guide for AI agents repeats. */
 export const FORMAT_REFERENCE = `## Layout
@@ -169,6 +169,7 @@ The \`text\` of a block uses Markdown-style marks:
 | \`[[Page title]]\` | a link to another page in this workspace |
 
 - **Escaping:** a backslash makes the next character plain, as in \`\\*\` and \`\\[\`.
+- **Inline code takes no other mark.** The app shows code inside bold, italic or a highlight as plain code, and code inside a link's words as plain words. Close the other mark first: \`\` **Total:** \`600 kcal\` \`\`.
 - **Line breaks** inside a block are \`\\n\`.
 - **Tags:** \`#tags\` are plain text, and the app lists and searches them.
 - **Page links** name the page by its title. When two pages share a title, they name it by its path from the space: \`[[Markets/Bitcoin, big picture/Weekly levels]]\`.
