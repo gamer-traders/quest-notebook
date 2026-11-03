@@ -94,3 +94,9 @@ test('Markdown files load beside the pages, named by their path, and an open one
 test('a snapshot from a main that knows no Markdown loads with none', () => {
   expect(snapshotToState(snapshot([])).markdown).toEqual([]);
 });
+
+test('spaces folded last time are folded again, known by their folder names', () => {
+  const s = snapshotToState(snapshot([], { collapsedSpaces: ['Lessons', 'Gone'] }));
+  expect(s.spaceCollapsed).toEqual({ sl: true });
+  expect(snapshotToState(snapshot([])).spaceCollapsed).toEqual({});
+});

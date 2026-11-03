@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import type { FlushBatch, QuestApi, WorkspaceSnapshot } from '@shared/ipc';
+import type { FlushBatch, QuestApi, UiState, WorkspaceSnapshot } from '@shared/ipc';
 import { useStore } from '../store';
 import { snapshotToState } from './load';
 import { drawingToSvg } from '../drawing/svg';
@@ -26,6 +26,7 @@ const snapshot: WorkspaceSnapshot = {
 let batches: FlushBatch[];
 let sync: SyncHandle;
 let flushResult: () => Promise<{ ok: boolean; error?: string; paths: Record<string, string> }>;
+let uiSaves: UiState[];
 
 const api: QuestApi['workspace'] = {
   flush: async (batch) => {
@@ -33,13 +34,14 @@ const api: QuestApi['workspace'] = {
     return flushResult();
   },
   saveMarkdown: async () => ({ ok: true }),
-  saveUi: async () => {},
+  saveUi: async (ui) => void uiSaves.push(ui),
   onDiskChange: () => () => {},
   onLost: () => () => {},
 };
 
 beforeEach(() => {
   batches = [];
+  uiSaves = [];
   flushResult = async () => ({ ok: true, paths: {} });
   useSaveStatus.setState({ error: null });
   const loaded = snapshotToState(snapshot);
@@ -260,4 +262,14 @@ test('a drawing-only save refused as stale is sent next time as the whole page, 
   expect(batches).toHaveLength(2);
   expect(batches[1].saves[0].json).toBeDefined();
   expect(Object.keys(batches[1].saves[0].sidecars)).toEqual(['drawing-d1.svg']);
+});
+
+test('folded spaces are saved with what the window shows, by folder name, and follow a rename', async () => {
+  vi.useFakeTimers();
+  useStore.getState().toggleSpace('sm');
+  await vi.advanceTimersByTimeAsync(1100);
+  expect(uiSaves.at(-1)?.collapsedSpaces).toEqual(['Markets']);
+  useStore.getState().renameSpace('sm', 'Crypto');
+  await vi.advanceTimersByTimeAsync(1100);
+  expect(uiSaves.at(-1)?.collapsedSpaces).toEqual(['Crypto']);
 });

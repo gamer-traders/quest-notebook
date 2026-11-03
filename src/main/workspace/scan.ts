@@ -79,6 +79,7 @@ async function readUi(root: string): Promise<UiState> {
       openPageId: typeof raw.openPageId === 'string' ? raw.openPageId : null,
       expanded: strings(raw.expanded),
       collapsedPanels: strings(raw.collapsedPanels),
+      collapsedSpaces: strings(raw.collapsedSpaces),
     };
   } catch {
     return EMPTY_UI;

@@ -171,6 +171,7 @@ interface SyncedState extends SyncSlice {
   activeId: string | null;
   expanded: Record<string, boolean>;
   panelCollapsed: Record<string, boolean>;
+  spaceCollapsed: Record<string, boolean>;
 }
 
 export interface SyncHandle {
@@ -203,6 +204,7 @@ const uiOf = (s: SyncedState): UiState => ({
   openPageId: s.activeId,
   expanded: Object.keys(s.expanded).filter((id) => s.expanded[id]),
   collapsedPanels: Object.keys(s.panelCollapsed).filter((id) => s.panelCollapsed[id]),
+  collapsedSpaces: s.spaces.filter((sp) => s.spaceCollapsed[sp.id]).map((sp) => sp.name),
 });
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -332,7 +334,8 @@ export function startSync<S extends SyncedState>(
   const unsubscribe = store.subscribe((s, old) => {
     if (fromDisk) return;
     if (s.notebooks !== old.notebooks || s.spaces !== old.spaces || s.journalSpaceId !== old.journalSpaceId) schedule();
-    if (s.activeId !== old.activeId || s.expanded !== old.expanded || s.panelCollapsed !== old.panelCollapsed) {
+    // A folded space is saved by name, so a rename is saved too.
+    if (s.activeId !== old.activeId || s.expanded !== old.expanded || s.panelCollapsed !== old.panelCollapsed || s.spaceCollapsed !== old.spaceCollapsed || s.spaces !== old.spaces) {
       if (uiTimer) clearTimeout(uiTimer);
       uiTimer = setTimeout(() => void saveUi(), UI_DELAY);
     }

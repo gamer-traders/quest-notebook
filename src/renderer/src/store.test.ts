@@ -515,3 +515,15 @@ test('Markdown files changed or removed on disk are taken in, and one that was o
   expect(useStore.getState().markdown.map((m) => [m.id, m.text])).toEqual([['md:M/b.md', 'b, edited'], ['md:M/c.md', 'c']]);
   expect(useStore.getState().activeId).toBe(page.id);
 });
+
+test('a space folds and unfolds, and a deleted space leaves nothing folded behind', () => {
+  const [first, second] = useStore.getState().spaces;
+  useStore.getState().toggleSpace(second.id);
+  expect(useStore.getState().spaceCollapsed).toEqual({ [second.id]: true });
+  useStore.getState().toggleSpace(second.id);
+  expect(useStore.getState().spaceCollapsed).toEqual({});
+  useStore.getState().toggleSpace(second.id);
+  useStore.getState().deleteSpace(second.id);
+  expect(useStore.getState().spaceCollapsed).toEqual({});
+  expect(first).toBeDefined();
+});

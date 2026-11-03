@@ -56,6 +56,8 @@ export interface UiState {
   openPageId: string | null;
   expanded: string[];
   collapsedPanels: string[];
+  /** Spaces folded in the sidebar, by folder name: a space's id is new each time the workspace opens. */
+  collapsedSpaces?: string[];
 }
 
 export interface WorkspaceSnapshot {
@@ -81,7 +83,7 @@ export interface WorkspaceConfig {
   journalSpace: string | null;
 }
 
-export const EMPTY_UI: UiState = { openPageId: null, expanded: [], collapsedPanels: [] };
+export const EMPTY_UI: UiState = { openPageId: null, expanded: [], collapsedPanels: [], collapsedSpaces: [] };
 
 /** A page the window wants on disk: where it belongs, and its finished file text. */
 export interface PageSave {

@@ -58,11 +58,11 @@
   --page-width: 1080px;
 
   /* Density: spacing in the sidebar, the page column, the editor and the toolbars. */
-  --sidebar-pad: 20px;
-  --sidebar-gap: 18px;
-  --space-gap: 14px;
-  --row-height: 30px;
-  --row-pad: 5px;
+  --sidebar-pad: 14px;
+  --sidebar-gap: 12px;
+  --space-gap: 8px;
+  --row-height: 26px;
+  --row-pad: 3px;
   --main-pad: 28px;
   --main-side: 40px;
   /* The page's padding on phones and tablets, on every side but the bottom. */
@@ -84,11 +84,11 @@
 }
 
 :root[data-density='compact'] {
-  --sidebar-pad: 12px;
-  --sidebar-gap: 10px;
-  --space-gap: 6px;
-  --row-height: 24px;
-  --row-pad: 2px;
+  --sidebar-pad: 10px;
+  --sidebar-gap: 8px;
+  --space-gap: 4px;
+  --row-height: 22px;
+  --row-pad: 1px;
   --main-pad: 14px;
   --main-side: 24px;
   --main-narrow: 10px;
@@ -101,11 +101,11 @@
 }
 
 :root[data-density='comfortable'] {
-  --sidebar-pad: 28px;
-  --sidebar-gap: 26px;
-  --space-gap: 22px;
-  --row-height: 36px;
-  --row-pad: 8px;
+  --sidebar-pad: 22px;
+  --sidebar-gap: 18px;
+  --space-gap: 14px;
+  --row-height: 32px;
+  --row-pad: 6px;
   --main-pad: 44px;
   --main-side: 60px;
   --main-narrow: 24px;
@@ -312,7 +312,7 @@ textarea:disabled {
   height: 100vh;
   overflow-y: auto;
   border-right: 1px solid var(--rule);
-  padding: var(--sidebar-pad) 16px;
+  padding: var(--sidebar-pad) 12px;
   display: flex;
   flex-direction: column;
   gap: var(--sidebar-gap);
@@ -320,6 +320,8 @@ textarea:disabled {
 
 .search input {
   width: 100%;
+  padding: 4px 8px;
+  font-size: 13px;
 }
 
 .tag-cloud {
@@ -343,8 +345,9 @@ textarea:disabled {
 /* Page tree: spaces, their pages and sub-pages. + and ⋯ stay out of sight until a row is pointed at or focused. */
 
 .page-tree {
-  --indent: 18px;
-  --twisty: 20px;
+  --indent: 14px;
+  --twisty: 16px;
+  font-size: 13.5px;
   display: grid;
   /* Long titles end in … rather than widen the sidebar. */
   grid-template-columns: minmax(0, 1fr);
@@ -364,19 +367,50 @@ textarea:disabled {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   min-height: calc(var(--row-height) - 2px);
-  padding: 0 4px 0 8px;
+  padding: 0 4px 0 0;
   border-radius: 4px;
 }
 
+/* Space names are quiet labels: small, grey, a little spaced. */
 .space-name {
   flex: 1;
   min-width: 0;
   margin: 0;
-  font-size: 13px;
+  font-size: 11.5px;
   font-weight: 600;
+  letter-spacing: 0.02em;
   color: var(--pencil);
+}
+
+.space-fold {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--twisty);
+  height: 18px;
+  margin-left: 4px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: var(--pencil);
+}
+
+.space-fold:hover {
+  color: var(--ink);
+  background: var(--rule);
+}
+
+/* Chevrons point right, and down while what they open is open. */
+.chevron {
+  display: block;
+  transition: transform 0.12s ease;
+}
+
+[aria-expanded='true'] > .chevron {
+  transform: rotate(90deg);
 }
 
 .space-handle {
@@ -397,10 +431,6 @@ textarea:disabled {
   padding: 0;
 }
 
-.tree-empty {
-  padding: 2px 8px 0 calc(8px + var(--twisty));
-}
-
 .tree-row {
   position: relative;
   display: flex;
@@ -418,10 +448,10 @@ textarea:disabled {
   color: var(--ink);
 }
 
+/* The open page: a soft sheet behind its name, nothing more. */
 .tree-row.is-current {
   color: var(--ink);
   font-weight: 500;
-  box-shadow: inset 3px 0 0 var(--mark-solid);
   background: var(--sheet);
 }
 
@@ -434,7 +464,7 @@ textarea:disabled {
   display: grid;
   place-items: center;
   width: var(--twisty);
-  height: 22px;
+  height: 18px;
   margin-left: 4px;
   padding: 0;
   border: none;
@@ -498,12 +528,12 @@ button.twisty:hover {
 }
 
 .row-tool {
-  padding: 1px 6px;
+  padding: 0 5px;
   border: none;
   border-radius: 3px;
   background: none;
   color: var(--pencil);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.3;
 }
 
@@ -573,10 +603,17 @@ button.twisty:hover {
   font-size: 13px;
 }
 
+/* Faint, at the bottom of the spaces, until it's pointed at. */
 .new-space {
   justify-self: start;
-  margin-left: 2px;
-  font-size: 13px;
+  margin-left: 4px;
+  padding: 2px 6px;
+  font-size: 12px;
+  color: var(--pencil);
+}
+
+.new-space:hover {
+  color: var(--ink);
 }
 
 /* Drop feedback: a line between rows, an outline around the row a page will go inside. */
@@ -926,6 +963,7 @@ button.twisty:hover {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  font-size: 13px;
 }
 
 .sidebar-foot button {

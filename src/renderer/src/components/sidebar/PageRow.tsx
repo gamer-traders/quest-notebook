@@ -7,6 +7,7 @@ import { displayTitle } from '../../page/tree';
 import type { Intent } from './dropIntent';
 import { InlineRename, type RenameEnd } from './InlineRename';
 import { RowMenu, type MenuItem } from './RowMenu';
+import { Chevron } from './Chevron';
 import { deletePageLabel } from './labels';
 
 /** What a drag carries, and what a drop zone takes. */
@@ -77,7 +78,7 @@ export function PageRow(props: PageRowProps) {
       <div ref={rowRef} className={classes.join(' ')} style={{ '--depth': depth, '--line-depth': drop?.lineDepth ?? depth } as CSSProperties}>
         {hasChildren ? (
           <button className="twisty" aria-expanded={open} aria-label={`${open ? 'Collapse' : 'Expand'} ${title}`} onClick={props.onToggle}>
-            {open ? '▾' : '▸'}
+            <Chevron />
           </button>
         ) : (
           <span className="twisty" aria-hidden />

@@ -107,9 +107,10 @@ export function PageTree({ onNavigate }: { onNavigate: () => void }) {
   const markdown = useStore((s) => s.markdown);
   const spaces = useStore((s) => s.spaces);
   const expanded = useStore((s) => s.expanded);
+  const spaceCollapsed = useStore((s) => s.spaceCollapsed);
   const activeId = useStore((s) => s.activeId);
   const view = useStore((s) => s.view);
-  const { openNotebook, createPage, toggleExpanded, updateNotebook, deletePage, createSpace, renameSpace, deleteSpace, movePage, moveSpace } =
+  const { openNotebook, createPage, toggleExpanded, toggleSpace, updateNotebook, deletePage, createSpace, renameSpace, deleteSpace, movePage, moveSpace } =
     useStore.getState();
 
   const [dragging, setDragging] = useState<DragItem | null>(null);
@@ -148,8 +149,11 @@ export function PageTree({ onNavigate }: { onNavigate: () => void }) {
     const reveal = shouldReveal(lastRevealed, key);
     lastRevealed = key;
     if (!reveal) return;
-    const { expanded, toggleExpanded } = useStore.getState();
+    const { expanded, toggleExpanded, spaceCollapsed, toggleSpace, notebooks, markdown } = useStore.getState();
     for (const id of ancestors) if (!expanded[id]) toggleExpanded(id);
+    // A folded space opens to show it.
+    const open = notebooks.find((nb) => nb.id === activeId) ?? markdown.find((m) => m.id === activeId);
+    if (open && spaceCollapsed[open.spaceId]) toggleSpace(open.spaceId);
   }, [activeId, ancestorKey]);
 
   const go = (fn: () => void) => {
@@ -278,7 +282,9 @@ export function PageTree({ onNavigate }: { onNavigate: () => void }) {
                 space={space}
                 onlySpace={spaces.length <= 1}
                 dropInside={drop?.kind === 'head' && drop.id === space.id}
+                collapsed={spaceCollapsed[space.id] === true}
                 renaming={renaming === `space:${space.id}`}
+                onToggle={() => toggleSpace(space.id)}
                 onAddPage={() => go(() => createPage(space.id, null))}
                 onStartRename={() => setRenaming(`space:${space.id}`)}
                 onRenameDone={(next) => {
@@ -288,9 +294,7 @@ export function PageTree({ onNavigate }: { onNavigate: () => void }) {
                 }}
                 onDelete={() => askDeleteSpace(space)}
               />
-              {rows.length === 0 ? (
-                <p className="muted tree-empty">None yet.</p>
-              ) : (
+              {spaceCollapsed[space.id] || rows.length === 0 ? null : (
                 <ul className="tree">
                   {rows.map((row) => {
                     if (row.kind === 'markdown') {

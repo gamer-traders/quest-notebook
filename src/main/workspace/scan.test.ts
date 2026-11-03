@@ -111,10 +111,10 @@ test('dot folders, hidden files, temporary files, other files and files at the r
 });
 
 test('ui state is read from .quest/state.json, and anything unreadable there is ignored', async () => {
-  const root = await tmpWorkspace({ '.quest/state.json': JSON.stringify({ openPageId: 'p1', expanded: ['p1'], collapsedPanels: [] }) });
-  expect((await scanWorkspace(root)).snapshot.ui).toEqual({ openPageId: 'p1', expanded: ['p1'], collapsedPanels: [] });
+  const root = await tmpWorkspace({ '.quest/state.json': JSON.stringify({ openPageId: 'p1', expanded: ['p1'], collapsedPanels: [], collapsedSpaces: ['Markets', 3] }) });
+  expect((await scanWorkspace(root)).snapshot.ui).toEqual({ openPageId: 'p1', expanded: ['p1'], collapsedPanels: [], collapsedSpaces: ['Markets'] });
   const broken = await tmpWorkspace({ '.quest/state.json': 'nope' });
-  expect((await scanWorkspace(broken)).snapshot.ui).toEqual({ openPageId: null, expanded: [], collapsedPanels: [] });
+  expect((await scanWorkspace(broken)).snapshot.ui).toEqual({ openPageId: null, expanded: [], collapsedPanels: [], collapsedSpaces: [] });
 });
 
 test('paths outside the workspace are refused', () => {

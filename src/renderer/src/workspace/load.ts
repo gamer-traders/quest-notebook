@@ -12,6 +12,8 @@ export interface LoadedState {
   journalSpaceId: string | null;
   expanded: Record<string, true>;
   panelCollapsed: Record<string, true>;
+  /** Spaces folded in the sidebar, by id. */
+  spaceCollapsed: Record<string, true>;
   activeId: string | null;
   repaired: Set<string>;
   /** Drawings whose files need writing in the app's form, by page. */
@@ -110,6 +112,7 @@ export function snapshotToState(snapshot: WorkspaceSnapshot): LoadedState {
     journalSpaceId: snapshot.journalSpaceId,
     expanded: flags(snapshot.ui.expanded, present),
     panelCollapsed: flags(snapshot.ui.collapsedPanels, present),
+    spaceCollapsed: Object.fromEntries(spaces.filter((s) => snapshot.ui.collapsedSpaces?.includes(s.name)).map((s) => [s.id, true as const])),
     activeId: open && openable.has(open) ? open : firstPage(notebooks, spaces),
     repaired,
     drawingsToWrite,

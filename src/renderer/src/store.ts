@@ -32,6 +32,8 @@ interface State {
   expanded: Record<string, boolean>;
   /** Pages whose Sub-pages panel is shut. */
   panelCollapsed: Record<string, boolean>;
+  /** Spaces folded in the sidebar. */
+  spaceCollapsed: Record<string, boolean>;
   activeId: string | null;
   view: 'notebook' | 'review';
   /** Resolved from `appearance.theme`. Charts, the editor and the migration gate read this one. */
@@ -63,6 +65,8 @@ interface State {
   /** Deletes a space and its pages. The last space stays. */
   deleteSpace: (id: string) => void;
   toggleExpanded: (id: string) => void;
+  /** Folds a space's pages away in the sidebar, or opens them again. */
+  toggleSpace: (id: string) => void;
   setPanelCollapsed: (id: string, collapsed: boolean) => void;
   clearFocusTitle: () => void;
   openTodayJournal: () => void;
@@ -153,6 +157,7 @@ export const useStore = create<State>()(
         journalSpaceId: null,
         expanded: {},
         panelCollapsed: {},
+        spaceCollapsed: {},
         activeId: null,
         view: 'notebook',
         theme: resolveTheme(DEFAULT_APPEARANCE.theme, systemPrefersDark()),
@@ -170,6 +175,7 @@ export const useStore = create<State>()(
             journalSpaceId: loaded.journalSpaceId,
             expanded: loaded.expanded,
             panelCollapsed: loaded.panelCollapsed,
+            spaceCollapsed: loaded.spaceCollapsed,
             activeId: loaded.activeId,
             view: 'notebook',
             flashBlockId: null,
@@ -220,7 +226,7 @@ export const useStore = create<State>()(
           }),
 
         closeWorkspace: () =>
-          set({ workspace: null, diskRevision: {}, notebooks: [], markdown: [], spaces: [], journalSpaceId: null, expanded: {}, panelCollapsed: {}, activeId: null, view: 'notebook', flashBlockId: null, focusTitleId: null }),
+          set({ workspace: null, diskRevision: {}, notebooks: [], markdown: [], spaces: [], journalSpaceId: null, expanded: {}, panelCollapsed: {}, spaceCollapsed: {}, activeId: null, view: 'notebook', flashBlockId: null, focusTitleId: null }),
 
         // Data for deleted blocks is dropped here rather than on delete, so undoing a delete still finds it.
         // The page already showing is left alone: its editor may hold an undo, or a block not saved yet.
@@ -303,11 +309,14 @@ export const useStore = create<State>()(
             return {
               ...removePages(s, null, removed, notebooks, spaces),
               spaces,
+              spaceCollapsed: without(s.spaceCollapsed, new Set([id])),
               journalSpaceId: s.journalSpaceId === id ? null : s.journalSpaceId,
             };
           }),
 
         toggleExpanded: (id) => set((s) => ({ expanded: flag(s.expanded, id, !s.expanded[id]) })),
+
+        toggleSpace: (id) => set((s) => ({ spaceCollapsed: flag(s.spaceCollapsed, id, !s.spaceCollapsed[id]) })),
 
         setPanelCollapsed: (id, collapsed) => set((s) => ({ panelCollapsed: flag(s.panelCollapsed, id, collapsed) })),
 
