@@ -2296,6 +2296,12 @@ button.twisty:hover {
   word-break: break-all;
 }
 
+/* A page the editor couldn't build: in the editor's place, lined up with the page's text. */
+
+.page-broken {
+  margin-left: var(--page-indent);
+}
+
 .unreadable-error {
   white-space: pre-wrap;
   word-break: break-word;

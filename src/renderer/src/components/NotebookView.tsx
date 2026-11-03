@@ -13,6 +13,7 @@ import { PagePath } from './PagePath';
 import { SubPagesPanel } from './SubPagesPanel';
 import { LOCKED_SUB_PAGE, deletePageLabel, deletePageQuestion } from './sidebar/labels';
 import { UnreadablePage } from './UnreadablePage';
+import { PageBoundary } from './PageBoundary';
 
 const isItemType = (type: string) => (ITEM_BLOCK_TYPES as readonly string[]).includes(type);
 
@@ -135,7 +136,9 @@ export function NotebookView() {
       )}
 
       {/* A change on disk starts the editor over with the new page. */}
-      <NotebookEditor key={`${nb.id}:${revision}`} notebook={nb} editable={!locked} />
+      <PageBoundary key={`${nb.id}:${revision}`}>
+        <NotebookEditor notebook={nb} editable={!locked} />
+      </PageBoundary>
       <Backlinks notebookId={nb.id} />
     </article>
   );
