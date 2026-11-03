@@ -117,6 +117,18 @@ export interface EmbedCell {
 /** Data behind an item block (chart, trade plan, prediction, drawing or embed) on a page. */
 export type ItemData = ChartCell | PlanCell | CallCell | DrawingCell | EmbedCell;
 
+/** A Markdown file in a space or a page's folder, shown and edited as its own text. */
+export interface MarkdownFile {
+  /** \`md:\` and its path: a Markdown file has no id of its own. */
+  id: string;
+  /** From the workspace folder, with '/' between parts. */
+  path: string;
+  spaceId: string;
+  /** The page whose folder holds it, or null at the top of its space. */
+  parentId: string | null;
+  text: string;
+}
+
 /** One of the owner's own top-level groups of pages. */
 export interface Space {
   id: string;

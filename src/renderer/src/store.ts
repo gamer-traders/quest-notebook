@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import type { DiskDelta } from '@shared/ipc';
-import type { ChartCell, ItemData, Notebook, Space } from './types';
+import type { ChartCell, ItemData, MarkdownFile, Notebook, Space } from './types';
+import { markdownFromRecord, markdownId } from './markdown/model';
 import type { PageBlock } from './page/blockTypes';
 import { itemSequence, pruneItems } from './page/blocks';
 import { childrenOf, deletePageTree, movePage as moveInTree, nextActiveAfterDelete, positionBetween, type Target } from './page/tree';
@@ -21,6 +22,8 @@ interface State {
   /** How many times each page was replaced by a change on disk. The editor starts over when it goes up. */
   diskRevision: Record<string, number>;
   notebooks: Notebook[];
+  /** Markdown files in the spaces and page folders. */
+  markdown: MarkdownFile[];
   /** The owner's spaces, in sidebar order. */
   spaces: Space[];
   /** The space "Today's journal" adds pages to, known by id so a rename keeps it. */
@@ -64,6 +67,8 @@ interface State {
   clearFocusTitle: () => void;
   openTodayJournal: () => void;
   updateNotebook: (id: string, patch: Partial<Pick<Notebook, 'title'>>) => void;
+  /** A Markdown file's text, once it's saved. */
+  setMarkdownText: (id: string, text: string) => void;
   setBlocks: (notebookId: string, blocks: PageBlock[]) => void;
   addItem: (notebookId: string, item: ItemData) => void;
   updateItem: <T extends ItemData>(notebookId: string, itemId: string, patch: Partial<T>) => void;
@@ -143,6 +148,7 @@ export const useStore = create<State>()(
         workspace: null,
         diskRevision: {},
         notebooks: [],
+        markdown: [],
         spaces: [],
         journalSpaceId: null,
         expanded: {},
@@ -159,6 +165,7 @@ export const useStore = create<State>()(
             workspace: { root, name },
             diskRevision: {},
             notebooks: loaded.notebooks,
+            markdown: loaded.markdown,
             spaces: loaded.spaces,
             journalSpaceId: loaded.journalSpaceId,
             expanded: loaded.expanded,
@@ -180,7 +187,19 @@ export const useStore = create<State>()(
             const diskRevision = { ...s.diskRevision };
             for (const nb of upserts) diskRevision[nb.id] = (diskRevision[nb.id] ?? 0) + 1;
 
+            const changed = new Map((delta.markdown ?? []).map((r) => [r.path, markdownFromRecord(r)]));
+            const goneMarkdown = new Set((delta.removedMarkdown ?? []).map(markdownId));
+            const markdown = [
+              ...s.markdown.filter((m) => !goneMarkdown.has(m.id)).map((m) => changed.get(m.path) ?? m),
+              ...[...changed.values()].filter((m) => !s.markdown.some((had) => had.id === m.id)),
+            ];
+
             let activeId = s.activeId;
+            // A Markdown file that was open and went: its page shows, or the first page there is.
+            if (activeId !== null && goneMarkdown.has(activeId)) {
+              const was = s.markdown.find((m) => m.id === activeId);
+              activeId = (was?.parentId && next.some((nb) => nb.id === was.parentId) ? was.parentId : null) ?? nextActiveAfterDelete(s.notebooks, delta.spaces, activeId, next);
+            }
             if (activeId !== null && gone.has(activeId)) {
               // A file fixed or renamed outside comes back as a new page at the same path: it stays open.
               const was = s.notebooks.find((nb) => nb.id === activeId);
@@ -189,6 +208,7 @@ export const useStore = create<State>()(
             }
             return {
               notebooks: next,
+              markdown,
               spaces: delta.spaces,
               journalSpaceId: delta.journalSpaceId,
               diskRevision,
@@ -200,7 +220,7 @@ export const useStore = create<State>()(
           }),
 
         closeWorkspace: () =>
-          set({ workspace: null, diskRevision: {}, notebooks: [], spaces: [], journalSpaceId: null, expanded: {}, panelCollapsed: {}, activeId: null, view: 'notebook', flashBlockId: null, focusTitleId: null }),
+          set({ workspace: null, diskRevision: {}, notebooks: [], markdown: [], spaces: [], journalSpaceId: null, expanded: {}, panelCollapsed: {}, activeId: null, view: 'notebook', flashBlockId: null, focusTitleId: null }),
 
         // Data for deleted blocks is dropped here rather than on delete, so undoing a delete still finds it.
         // The page already showing is left alone: its editor may hold an undo, or a block not saved yet.
@@ -330,6 +350,8 @@ export const useStore = create<State>()(
         },
 
         updateNotebook: (id, patch) => editNotebook(id, (nb) => ({ ...nb, ...patch })),
+
+        setMarkdownText: (id, text) => set((s) => ({ markdown: s.markdown.map((m) => (m.id === id ? { ...m, text } : m)) })),
 
         setBlocks: (notebookId, blocks) => editNotebook(notebookId, (nb) => ({ ...nb, blocks })),
 

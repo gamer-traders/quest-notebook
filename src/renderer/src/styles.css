@@ -465,6 +465,14 @@ button.twisty:hover {
   touch-action: manipulation;
 }
 
+/* A Markdown file's row: its name, then .md, quietly. */
+.row-kind {
+  margin-left: 4px;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+
 .row-tools {
   flex: none;
   display: flex;

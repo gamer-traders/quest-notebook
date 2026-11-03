@@ -17,39 +17,19 @@ import {
 } from '@dnd-kit/core';
 import type { Notebook, Space } from '../../types';
 import { ancestorsOf, canMove, childrenOf, descendantIds, displayTitle, type Target } from '../../page/tree';
+import { visibleRows } from './rows';
+import { isMarkdownId } from '../../markdown/model';
 import { useStore } from '../../store';
 import { copyLink } from '../../editor/copyLink';
 import { dropIntent, targetFor, type Intent } from './dropIntent';
 import { deletePageQuestion, deleteSpaceQuestion } from './labels';
 import { MoveToDialog } from './MoveToDialog';
-import { PageRow, type DragItem, type DropZone } from './PageRow';
+import { MarkdownRow, PageRow, type DragItem, type DropZone } from './PageRow';
 import { revealKey, shouldReveal } from './reveal';
 import { SpaceHeader } from './SpaceHeader';
 
 /** What the tree last revealed. It lives outside the tree, which search unmounts; null until the first draw. */
 let lastRevealed: string | null = null;
-
-interface Row {
-  page: Notebook;
-  depth: number;
-  hasChildren: boolean;
-  open: boolean;
-}
-
-/** A space's pages as the sidebar lists them: each page, then its sub-pages when it's expanded. */
-function visibleRows(notebooks: Notebook[], spaceId: string, expanded: Record<string, boolean>): Row[] {
-  const rows: Row[] = [];
-  const walk = (parentId: string | null, depth: number) => {
-    for (const page of childrenOf(notebooks, spaceId, parentId)) {
-      const hasChildren = notebooks.some((nb) => nb.parentId === page.id && nb.spaceId === spaceId);
-      const open = hasChildren && expanded[page.id] === true;
-      rows.push({ page, depth, hasChildren, open });
-      if (open) walk(page.id, depth + 1);
-    }
-  };
-  walk(null, 0);
-  return rows;
-}
 
 /** What letting go would do, and how the tree shows it beforehand. */
 type Drop =
@@ -124,6 +104,7 @@ function SpaceSection({ space, dragging, dropLine, children }: { space: Space; d
 /** The spaces and their page trees, with drag and drop, the ⋯ menus, inline renames and Move to…. */
 export function PageTree({ onNavigate }: { onNavigate: () => void }) {
   const notebooks = useStore((s) => s.notebooks);
+  const markdown = useStore((s) => s.markdown);
   const spaces = useStore((s) => s.spaces);
   const expanded = useStore((s) => s.expanded);
   const activeId = useStore((s) => s.activeId);
@@ -144,7 +125,7 @@ export function PageTree({ onNavigate }: { onNavigate: () => void }) {
     useSensor(KeyboardSensor, { keyboardCodes: KEYBOARD_CODES, coordinateGetter: keyboardStep }),
   );
 
-  const rowsBySpace = useMemo(() => new Map(spaces.map((sp) => [sp.id, visibleRows(notebooks, sp.id, expanded)])), [notebooks, spaces, expanded]);
+  const rowsBySpace = useMemo(() => new Map(spaces.map((sp) => [sp.id, visibleRows(notebooks, markdown, sp.id, expanded)])), [notebooks, markdown, spaces, expanded]);
   const subPageCounts = useMemo(() => {
     const parents = new Set(notebooks.map((nb) => nb.parentId));
     return new Map(notebooks.filter((nb) => parents.has(nb.id)).map((nb) => [nb.id, descendantIds(notebooks, nb.id).length]));
@@ -153,7 +134,14 @@ export function PageTree({ onNavigate }: { onNavigate: () => void }) {
   // A page that opens, or moves under collapsed pages, has its ancestors expanded so its row shows,
   // including one opened from search while the tree was swapped out. Not on load: rows collapsed last
   // time stay collapsed, even around the open page.
-  const ancestorKey = useStore((s) => (s.activeId ? ancestorsOf(s.notebooks, s.activeId).map((a) => a.id).join(' ') : ''));
+  const ancestorKey = useStore((s) => {
+    if (!s.activeId) return '';
+    // A Markdown file's ancestors are its page and that page's.
+    const file = isMarkdownId(s.activeId) ? s.markdown.find((m) => m.id === s.activeId) : undefined;
+    const parent = file?.parentId ? s.notebooks.find((nb) => nb.id === file.parentId) : undefined;
+    const chain = file ? (parent ? [...ancestorsOf(s.notebooks, parent.id), parent] : []) : ancestorsOf(s.notebooks, s.activeId);
+    return chain.map((a) => a.id).join(' ');
+  });
   useEffect(() => {
     const ancestors = ancestorKey ? ancestorKey.split(' ') : [];
     const key = revealKey(activeId, ancestors);
@@ -304,30 +292,44 @@ export function PageTree({ onNavigate }: { onNavigate: () => void }) {
                 <p className="muted tree-empty">None yet.</p>
               ) : (
                 <ul className="tree">
-                  {rows.map(({ page, depth, hasChildren, open }) => (
-                    <PageRow
-                      key={page.id}
-                      page={page}
-                      depth={depth}
-                      hasChildren={hasChildren}
-                      open={open}
-                      current={view === 'notebook' && page.id === activeId}
-                      subPages={subPageCounts.get(page.id) ?? 0}
-                      drop={drop?.kind === 'row' && drop.id === page.id ? { intent: drop.intent, lineDepth: drop.lineDepth } : null}
-                      renaming={renaming === page.id}
-                      onOpen={() => go(() => openNotebook(page.id))}
-                      onToggle={() => toggleExpanded(page.id)}
-                      onAddSubPage={() => go(() => createPage(page.spaceId, page.id))}
-                      onStartRename={() => setRenaming(page.id)}
-                      onRenameDone={(next) => {
-                        if (next !== null) updateNotebook(page.id, { title: next });
-                        setRenaming(null);
-                      }}
-                      onMoveTo={() => setMoving(page.id)}
-                      onCopyLink={() => void copyLink(page.id, displayTitle(page.title)).catch((error) => console.error('The link could not be copied.', error))}
-                      onDelete={() => askDeletePage(page)}
-                    />
-                  ))}
+                  {rows.map((row) => {
+                    if (row.kind === 'markdown') {
+                      return (
+                        <MarkdownRow
+                          key={row.file.id}
+                          file={row.file}
+                          depth={row.depth}
+                          current={view === 'notebook' && row.file.id === activeId}
+                          onOpen={() => go(() => openNotebook(row.file.id))}
+                        />
+                      );
+                    }
+                    const { page, depth, hasChildren, open } = row;
+                    return (
+                      <PageRow
+                        key={page.id}
+                        page={page}
+                        depth={depth}
+                        hasChildren={hasChildren}
+                        open={open}
+                        current={view === 'notebook' && page.id === activeId}
+                        subPages={subPageCounts.get(page.id) ?? 0}
+                        drop={drop?.kind === 'row' && drop.id === page.id ? { intent: drop.intent, lineDepth: drop.lineDepth } : null}
+                        renaming={renaming === page.id}
+                        onOpen={() => go(() => openNotebook(page.id))}
+                        onToggle={() => toggleExpanded(page.id)}
+                        onAddSubPage={() => go(() => createPage(page.spaceId, page.id))}
+                        onStartRename={() => setRenaming(page.id)}
+                        onRenameDone={(next) => {
+                          if (next !== null) updateNotebook(page.id, { title: next });
+                          setRenaming(null);
+                        }}
+                        onMoveTo={() => setMoving(page.id)}
+                        onCopyLink={() => void copyLink(page.id, displayTitle(page.title)).catch((error) => console.error('The link could not be copied.', error))}
+                        onDelete={() => askDeletePage(page)}
+                      />
+                    );
+                  })}
                 </ul>
               )}
             </SpaceSection>

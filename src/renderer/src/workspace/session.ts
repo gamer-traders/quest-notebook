@@ -4,6 +4,7 @@ import { useStore } from '../store';
 import { seedFor } from '../lib/seed';
 import { childrenOf, displayTitle, positionBetween } from '../page/tree';
 import { unsavedEditors } from '../editor/pending';
+import { markdownSaves } from '../markdown/saving';
 import { deltaToNotebooks, drawingsIn, snapshotToState } from './load';
 import { startSync, useSaveStatus, type SyncHandle } from './sync';
 import type { Notebook } from '../types';
@@ -82,10 +83,10 @@ export function markDirty(ids: Iterable<string>): void {
   sync?.markDirty(ids);
 }
 
-/** Sends everything not yet sent, including words still waiting in an editor. Main asks for this before the window closes. */
+/** Sends everything not yet sent, including words still waiting in an editor or a Markdown file. Main asks for this before the window closes. */
 export async function flushWorkspace(): Promise<void> {
   unsavedEditors.flushAll();
-  await sync?.flush();
+  await Promise.all([sync?.flush(), markdownSaves.flushAll()]);
 }
 
 /**

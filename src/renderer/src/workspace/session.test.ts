@@ -4,6 +4,7 @@ import type { FlushBatch, QuestApi, WorkspaceSnapshot } from '@shared/ipc';
 import { useStore } from '../store';
 import type { DrawingCell } from '../types';
 import { unsavedEditors } from '../editor/pending';
+import { markdownSaves } from '../markdown/saving';
 import type { PageBlock } from '../page/blockTypes';
 import { applyDisk, flushWorkspace, startWorkspace, stopWorkspace, useDiskNotice } from './session';
 
@@ -199,4 +200,18 @@ test('a sub-page kept with its parent, both being edited, stays under it when th
   expect(page('b')).toMatchObject({ spaceId: 'sl', parentId: null });
   expect(page('c')).toMatchObject({ spaceId: 'sl', parentId: 'b' });
   expect(useDiskNotice.getState().text).toContain('“B edited” and “C edited”');
+});
+
+test('saving before the window closes waits for Markdown files still being written', async () => {
+  let saved = false;
+  const forget = markdownSaves.register(async () => {
+    await Promise.resolve();
+    saved = true;
+  });
+  try {
+    await flushWorkspace();
+    expect(saved).toBe(true);
+  } finally {
+    forget();
+  }
 });

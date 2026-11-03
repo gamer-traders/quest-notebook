@@ -1,5 +1,5 @@
 /** Which version of the README this is. A README an earlier app version wrote is replaced by this one. */
-export const README_MARKER = '<!-- quest-notebook-readme: 5 -->';
+export const README_MARKER = '<!-- quest-notebook-readme: 6 -->';
 
 /** The file format, from the folder's layout on: what the README explains, and the guide for AI agents repeats. */
 export const FORMAT_REFERENCE = `## Layout
@@ -12,13 +12,15 @@ AGENTS.md                     the guide for AI agents (CLAUDE.md and GEMINI.md b
 .quest/state.json             what the app was showing (the app's own; don't edit)
 <Space>/                      a top-level folder is a space, named after the folder
   <Page title>.json           a page
+  <Notes>.md                  a Markdown file, shown beside the pages
   <Page title>/               the page's folder, if it has sub-pages or drawings
     <Sub-page title>.json     a sub-page
     drawing-<id>.svg          a drawing on the page
 \`\`\`
 
 - **Pages:** every \`.json\` file inside a space folder is a page.
-- **Ignored:** files at the top of the workspace, names starting with \`.\`, and files that aren't \`.json\` (except a page's drawings).
+- **Markdown files:** a \`.md\` file in a space, or in a page's folder, shows in the app beside the pages, as it's written. The app changes one only when it's edited in the app, and never over a change made on disk since it was opened.
+- **Ignored:** files at the top of the workspace, names starting with \`.\`, and files that aren't \`.json\` or \`.md\` (except a page's drawings).
 - **File names:** a page's file is named after its title, with \`/ \\ : * ? " < > |\` replaced by \`-\`. Pages with the same title next to each other get \`Title 2.json\`, \`Title 3.json\`, ….
 - **Renaming a file:** the file's new name becomes the page's title.
 - **A page and its folder go together.** Rename or move the folder along with the page file. If the folder holds only drawings and you forget it, the app moves it after the page file for you.

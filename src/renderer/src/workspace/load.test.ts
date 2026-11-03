@@ -76,3 +76,21 @@ test('a delta keeps positions of pages that lose theirs, and a renamed file rena
   expect(upserts[0]).toMatchObject({ id: 'a', title: 'Alpha', position: 2, path: 'Markets/Alpha.json' });
   expect([...repaired]).toEqual(['a']);
 });
+
+const md = (path: string, parentId: string | null, text: string, spaceId = 'sm') => ({ path, spaceId, parentId, mtimeMs: 0, text });
+
+test('Markdown files load beside the pages, named by their path, and an open one opens again', () => {
+  const s = snapshotToState({
+    ...snapshot([record('a', 'Markets/A.json', null, file('a', 'A'))], { openPageId: 'md:Markets/A/Notes.md' }),
+    markdown: [md('Markets/A/Notes.md', 'a', '# Notes'), md('Markets/Plan.md', null, 'plan')],
+  });
+  expect(s.markdown).toEqual([
+    { id: 'md:Markets/A/Notes.md', path: 'Markets/A/Notes.md', spaceId: 'sm', parentId: 'a', text: '# Notes' },
+    { id: 'md:Markets/Plan.md', path: 'Markets/Plan.md', spaceId: 'sm', parentId: null, text: 'plan' },
+  ]);
+  expect(s.activeId).toBe('md:Markets/A/Notes.md');
+});
+
+test('a snapshot from a main that knows no Markdown loads with none', () => {
+  expect(snapshotToState(snapshot([])).markdown).toEqual([]);
+});

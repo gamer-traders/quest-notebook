@@ -496,3 +496,22 @@ test('a page whose file is fixed stays open under its real id', () => {
   expect(state().activeId).toBe('x1');
   expect(notebook('x1').loadError).toBeUndefined();
 });
+
+const mdFile = (path: string, parentId: string | null, text: string) => ({ path, spaceId: 'space-market', parentId, mtimeMs: 0, text });
+
+test('Markdown files changed or removed on disk are taken in, and one that was open gives way to its page', () => {
+  const { notebooks } = useStore.getState();
+  const page = notebooks[0];
+  useStore.setState({ markdown: [{ id: 'md:M/a.md', path: 'M/a.md', spaceId: page.spaceId, parentId: page.id, text: 'a' }, { id: 'md:M/b.md', path: 'M/b.md', spaceId: page.spaceId, parentId: null, text: 'b' }], activeId: 'md:M/a.md' });
+  useStore.getState().applyDiskDelta({
+    seq: 1,
+    spaces: useStore.getState().spaces,
+    journalSpaceId: useStore.getState().journalSpaceId,
+    pages: [],
+    removed: [],
+    markdown: [{ ...mdFile('M/b.md', null, 'b, edited'), spaceId: page.spaceId }, { ...mdFile('M/c.md', null, 'c'), spaceId: page.spaceId }],
+    removedMarkdown: ['M/a.md'],
+  });
+  expect(useStore.getState().markdown.map((m) => [m.id, m.text])).toEqual([['md:M/b.md', 'b, edited'], ['md:M/c.md', 'c']]);
+  expect(useStore.getState().activeId).toBe(page.id);
+});

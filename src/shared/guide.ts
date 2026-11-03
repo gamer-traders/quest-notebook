@@ -7,7 +7,7 @@ import { FORMAT_REFERENCE } from './readme';
 */
 
 /** Which version of the guide this is. Raise it whenever the guide's text changes. */
-export const GUIDE_VERSION = 2;
+export const GUIDE_VERSION = 3;
 
 const MARK = `<!-- quest-notebook-guide: ${GUIDE_VERSION} -->`;
 
@@ -116,6 +116,9 @@ this guide, so you don't need to ask how the files work.
 - **Move or rename a page together with its folder**: \`<Title>.json\` and \`<Title>/\` go side by side.
 - **Delete a page** by deleting its file and its folder. If the app has edits to that page it hasn't saved yet,
   it keeps them and writes the page back.
+- **Plain notes** can be Markdown instead: a \`.md\` file in a space or a page's folder shows in the app as it's
+  written, and \`[[Page title]]\` links to a page or another Markdown file there. Use a page when you need charts,
+  plans, predictions, drawings or embeds.
 - **Drawings** are SVG files beside the page. Add a stroke by adding a \`<path>\` with \`data-points\` (see
   **Drawings**).
 - **Don't edit** \`.quest/state.json\`, \`README.md\` or the guide files (\`AGENTS.md\`, \`CLAUDE.md\`, \`GEMINI.md\`,

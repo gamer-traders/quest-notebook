@@ -8,9 +8,12 @@ import { SaveWarning } from './components/SaveWarning';
 import { DiskNotice } from './components/DiskNotice';
 import { Welcome } from './components/Welcome';
 import { useWorkspaceUi } from './workspace/session';
+import { MarkdownView } from './markdown/MarkdownView';
+import { isMarkdownId } from './markdown/model';
 
 export function App() {
   const view = useStore((s) => s.view);
+  const openMarkdown = useStore((s) => (isMarkdownId(s.activeId) ? (s.markdown.find((m) => m.id === s.activeId) ?? null) : null));
   const workspace = useStore((s) => s.workspace);
   const screen = useWorkspaceUi((s) => s.screen);
   const [navOpen, setNavOpen] = useState(false);
@@ -52,7 +55,7 @@ export function App() {
       <main className="main">
         <SaveWarning />
         <DiskNotice />
-        {view === 'review' ? <ReviewView /> : <NotebookView />}
+        {view === 'review' ? <ReviewView /> : openMarkdown ? <MarkdownView key={openMarkdown.id} file={openMarkdown} /> : <NotebookView />}
       </main>
       {settings && <SettingsDialog trigger={settings.trigger} onClose={() => setSettings(null)} />}
     </div>

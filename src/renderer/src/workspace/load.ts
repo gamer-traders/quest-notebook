@@ -1,5 +1,6 @@
 import type { DiskDelta, PageRecord, WorkspaceSnapshot } from '@shared/ipc';
-import type { DrawingCell, Notebook, Space } from '../types';
+import type { DrawingCell, MarkdownFile, Notebook, Space } from '../types';
+import { markdownFromRecord } from '../markdown/model';
 import { childrenOf } from '../page/tree';
 import { fileToPage } from '../files/convert';
 import { resolveLinks } from '../files/links';
@@ -15,6 +16,7 @@ export interface LoadedState {
   repaired: Set<string>;
   /** Drawings whose files need writing in the app's form, by page. */
   drawingsToWrite: Map<string, Set<string>>;
+  markdown: MarkdownFile[];
 }
 
 const baseName = (path: string) => (path.split('/').at(-1) ?? path).replace(/\.json$/i, '');
@@ -99,16 +101,19 @@ export function snapshotToState(snapshot: WorkspaceSnapshot): LoadedState {
   const spaces = snapshot.spaces.map((s) => ({ ...s }));
   const notebooks = resolveLinks(loaded, spaces);
   const present = new Set(notebooks.map((n) => n.id));
+  const markdown = (snapshot.markdown ?? []).map(markdownFromRecord);
   const open = snapshot.ui.openPageId;
+  const openable = new Set([...present, ...markdown.map((m) => m.id)]);
   return {
     notebooks,
     spaces,
     journalSpaceId: snapshot.journalSpaceId,
     expanded: flags(snapshot.ui.expanded, present),
     panelCollapsed: flags(snapshot.ui.collapsedPanels, present),
-    activeId: open && present.has(open) ? open : firstPage(notebooks, spaces),
+    activeId: open && openable.has(open) ? open : firstPage(notebooks, spaces),
     repaired,
     drawingsToWrite,
+    markdown,
   };
 }
 

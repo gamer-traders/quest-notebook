@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { useCombinedRefs } from '@dnd-kit/utilities';
-import type { Notebook } from '../../types';
+import type { MarkdownFile, Notebook } from '../../types';
+import { markdownName } from '../../markdown/model';
 import { displayTitle } from '../../page/tree';
 import type { Intent } from './dropIntent';
 import { InlineRename, type RenameEnd } from './InlineRename';
@@ -108,6 +109,24 @@ export function PageRow(props: PageRowProps) {
           </button>
           <RowMenu label={`More for ${title}`} items={items} onOpenChange={setMenuOpen} />
         </span>
+      </div>
+    </li>
+  );
+}
+
+/** A Markdown file in the sidebar tree: its name, marked as a Markdown file, which opens it. */
+export function MarkdownRow({ file, depth, current, onOpen }: { file: MarkdownFile; depth: number; current: boolean; onOpen: () => void }) {
+  const name = markdownName(file);
+  return (
+    <li>
+      <div className={['tree-row', 'markdown-row', current && 'is-current'].filter(Boolean).join(' ')} style={{ '--depth': depth, '--line-depth': depth } as CSSProperties}>
+        <span className="twisty" aria-hidden />
+        <button className="row-title" aria-current={current ? 'page' : undefined} title={file.path} onClick={onOpen}>
+          {name}
+          <span className="row-kind" aria-label="Markdown file">
+            .md
+          </span>
+        </button>
       </div>
     </li>
   );
