@@ -20,6 +20,7 @@ const EVERY_TYPE: Record<FileBlock['type'], true> = {
   tradePlan: true,
   prediction: true,
   drawing: true,
+  embed: true,
 };
 
 type Block = { type: string; children?: Block[] };

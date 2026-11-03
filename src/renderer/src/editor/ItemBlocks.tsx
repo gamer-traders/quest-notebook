@@ -9,6 +9,7 @@ import { ChartCellView } from '../cells/ChartCellView';
 import { PlanCellView } from '../cells/PlanCellView';
 import { CallCellView } from '../cells/CallCellView';
 import { DrawingView } from '../drawing/DrawingView';
+import { EmbedView } from '../embed/EmbedView';
 import { useNotebookId } from './NotebookContext';
 
 // Chart, trade plan and prediction blocks hold only an id. Their data lives in the notebook's
@@ -91,10 +92,17 @@ function DrawingBlockView({ blockId }: { blockId: string }) {
   return <DrawingView notebookId={notebookId} drawing={data} />;
 }
 
+function EmbedBlockView({ blockId }: { blockId: string }) {
+  const notebookId = useNotebookId();
+  const data = useItem(blockId);
+  if (data?.type !== 'embed') return <Missing />;
+  return <EmbedView notebookId={notebookId} embed={data} />;
+}
+
 /** What a copied block becomes outside the app: one line of text instead of a dead chart. */
 function ItemSummary({ blockId, label }: { blockId: string; label: string }) {
   const data = useItem(blockId);
-  const detail = !data || data.type === 'drawing' ? '' : data.type === 'chart' ? chartTitle(data) : data.reason;
+  const detail = !data || data.type === 'drawing' ? '' : data.type === 'chart' ? chartTitle(data) : data.type === 'embed' ? (data.kind === 'url' ? data.url : '') : data.reason;
   return <p>{detail ? `${label}: ${detail}` : label}</p>;
 }
 
@@ -143,5 +151,17 @@ export const DrawingBlock = createReactBlockSpec(
       </ItemFrame>
     ),
     toExternalHTML: ({ block }) => <ItemSummary blockId={block.id} label="Drawing" />,
+  },
+);
+
+export const EmbedBlock = createReactBlockSpec(
+  { type: 'embed', propSchema: itemProps, content: 'none' },
+  {
+    render: ({ block }) => (
+      <ItemFrame kind="embed">
+        <EmbedBlockView blockId={block.id} />
+      </ItemFrame>
+    ),
+    toExternalHTML: ({ block }) => <ItemSummary blockId={block.id} label="Embed" />,
   },
 );

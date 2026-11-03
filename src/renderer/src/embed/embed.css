@@ -1,0 +1,64 @@
+/* Embeds: a piece of the web on the page, in a frame of its own. */
+
+.embed {
+  display: grid;
+  gap: 8px;
+}
+
+.embed-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.embed-source,
+.embed-address {
+  width: 100%;
+  box-sizing: border-box;
+  font: 13px/1.5 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  color: var(--ink);
+  background: var(--sheet);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+
+.embed-source {
+  min-height: 160px;
+  resize: vertical;
+}
+
+/* Web pages expect white paper, whatever the app's theme. */
+.embed-frame {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: #ffffff;
+}
+
+/* While the height is dragged, the frame mustn't take the pointer. */
+.embed.resizing .embed-frame {
+  pointer-events: none;
+}
+
+.embed-empty {
+  margin: 0;
+  padding: 16px;
+  color: var(--ink-soft);
+  border: 1px dashed var(--rule-strong);
+  border-radius: var(--radius);
+}
+
+.embed-resize {
+  height: 8px;
+  margin-top: -6px;
+  cursor: ns-resize;
+  touch-action: none;
+  border-radius: 4px;
+}
+
+.embed-resize:hover {
+  background: var(--rule);
+}

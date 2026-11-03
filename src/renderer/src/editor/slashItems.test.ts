@@ -66,11 +66,22 @@ test('Trade plan after some words goes below them, with the id of its data', () 
 test('the menu has the page blocks and ours, and no emoji or blocks a page leaves out', () => {
   open([{ type: 'paragraph' }]);
   const titles = pageSlashItems(editor, 'n1').map((i) => i.title);
-  expect(titles.slice(0, 4)).toEqual(['Chart', 'Trade plan', 'Prediction', 'Drawing']);
+  expect(titles.slice(0, 5)).toEqual(['Chart', 'Trade plan', 'Prediction', 'Drawing', 'Embed']);
   expect(titles).toContain('Callout');
   expect(titles).toContain('Heading 3');
   expect(titles).not.toContain('Heading 4');
   expect(titles).not.toContain('Emoji');
   expect(titles).not.toContain('Table');
   expect(titles).not.toContain('Toggle List');
+});
+
+test('Embed puts an empty HTML embed on the line, with the id of its data', () => {
+  open([{ id: 'p', type: 'paragraph' }]);
+  editor.setTextCursorPosition('p');
+  pick('Embed');
+
+  const block = editor.document[0];
+  expect(block.type).toBe('embed');
+  expect(block.props).toEqual({ itemId: block.id });
+  expect(items()[block.id]).toEqual({ id: block.id, type: 'embed', kind: 'html', html: '', url: '', height: 400 });
 });

@@ -24,10 +24,11 @@ const ICONS = {
   call: icon('M4 17l6-6 4 4 6-7M15 8h5v5'),
   drawing: icon('M4 20l4-1 10-10-3-3L5 16zM14 7l3 3M14 20c2-2 4-1 6-3'),
   callout: icon('M4 5h16v11H10l-4 3.5V16H4zM8 9.5h8M8 12.5h5'),
+  embed: icon('M8 8l-4 4 4 4M16 8l4 4-4 4M13.5 5l-3 14'),
   link: icon('M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1'),
 };
 
-const ITEM_GROUP = 'Charts, trades and drawings';
+const ITEM_GROUP = 'Charts, trades, drawings and embeds';
 
 /** Files a new chart, plan or prediction under the notebook, then puts its block at the caret. */
 function insertItem(editor: PageEditor, notebookId: string, kind: keyof typeof ITEM_BLOCK_FOR) {
@@ -83,6 +84,14 @@ export function pageSlashItems(editor: PageEditor, notebookId: string): DefaultR
       group: ITEM_GROUP,
       icon: ICONS.drawing,
       onItemClick: () => insertItem(editor, notebookId, 'drawing'),
+    },
+    {
+      title: 'Embed',
+      subtext: 'HTML with its CSS and scripts, or a web page',
+      aliases: ['embed', 'html', 'iframe', 'web', 'page', 'widget', 'script', 'website'],
+      group: ITEM_GROUP,
+      icon: ICONS.embed,
+      onItemClick: () => insertItem(editor, notebookId, 'embed'),
     },
   ];
 

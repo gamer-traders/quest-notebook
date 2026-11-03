@@ -29,7 +29,7 @@ export interface PageBlock {
 }
 
 /** Block types whose data lives in the notebook's `items`, keyed by block id. */
-export const ITEM_BLOCK_TYPES = ['chart', 'tradePlan', 'prediction', 'drawing'] as const;
+export const ITEM_BLOCK_TYPES = ['chart', 'tradePlan', 'prediction', 'drawing', 'embed'] as const;
 
 /** The block type that shows each kind of item data. */
-export const ITEM_BLOCK_FOR = { chart: 'chart', plan: 'tradePlan', call: 'prediction', drawing: 'drawing' } as const;
+export const ITEM_BLOCK_FOR = { chart: 'chart', plan: 'tradePlan', call: 'prediction', drawing: 'drawing', embed: 'embed' } as const;

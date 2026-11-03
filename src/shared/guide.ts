@@ -7,7 +7,7 @@ import { FORMAT_REFERENCE } from './readme';
 */
 
 /** Which version of the guide this is. Raise it whenever the guide's text changes. */
-export const GUIDE_VERSION = 1;
+export const GUIDE_VERSION = 2;
 
 const MARK = `<!-- quest-notebook-guide: ${GUIDE_VERSION} -->`;
 
@@ -84,7 +84,14 @@ const EXAMPLE_PAGE = `{
         { "time": "2000-01-04T00:00:00Z", "open": 108, "high": 112, "low": 101, "close": 103, "volume": 0 }
       ]
     },
-    { "type": "drawing", "id": "d81k2m0q", "file": "drawing-d81k2m0q.svg" }
+    { "type": "drawing", "id": "d81k2m0q", "file": "drawing-d81k2m0q.svg" },
+    {
+      "type": "embed",
+      "id": "h6j3w9e2",
+      "html": "<style>p { font: 16px sans-serif; color: #1d5bc2 }</style><p id='today'></p><script>document.getElementById('today').textContent = new Date().toDateString()</script>",
+      "height": 120
+    },
+    { "type": "embed", "id": "w3b8n5r2", "url": "https://example.com/", "height": 600 }
   ]
 }`;
 

@@ -264,3 +264,22 @@ test('a picture with shapes but no stroke data is shown empty and never written 
   expect((notebook.items.d4 as DrawingCell).strokes).toEqual([]);
   expect([...drawingsToWrite]).toEqual([]);
 });
+
+test('an embed keeps its HTML, or its web address, and its height', () => {
+  const html = '<style>b { color: red }</style><b id="x">hi</b><script>document.getElementById("x").textContent = "js";</script>';
+  const blocks = [
+    { type: 'embed', id: 'e1', html, height: 320 },
+    { type: 'embed', id: 'e2', url: 'https://www.tradingview.com/chart/', height: 600 },
+  ];
+  const { notebook, repaired } = fileToPage(whole(blocks), nm());
+  expect(repaired).toBe(false);
+  expect(notebook.items.e1).toMatchObject({ type: 'embed', kind: 'html', html, height: 320 });
+  expect(notebook.items.e2).toMatchObject({ type: 'embed', kind: 'url', url: 'https://www.tradingview.com/chart/', height: 600 });
+  expect(pageToFile(notebook, writeTarget).blocks).toEqual(blocks);
+});
+
+test('an embed missing its height, or with one out of reach, gets a usable one, and one with nothing in it is empty HTML', () => {
+  const { notebook } = fileToPage(whole([{ type: 'embed', id: 'e1' }, { type: 'embed', id: 'e2', html: '<p>x</p>', height: -5 }]), nm());
+  expect(notebook.items.e1).toMatchObject({ type: 'embed', kind: 'html', html: '', height: 400 });
+  expect(notebook.items.e2).toMatchObject({ height: 400 });
+});

@@ -113,6 +113,17 @@ export interface FileDrawing extends WithChildren {
   file: string;
 }
 
+export interface FileEmbed extends WithChildren {
+  type: 'embed';
+  id: string;
+  /** HTML to show, with its own CSS and scripts. */
+  html?: string;
+  /** Or the address of a web page to show, http or https. */
+  url?: string;
+  /** How tall it shows, in pixels. */
+  height: number;
+}
+
 export type FileBlock =
   | FileTextBlock
   | FileHeading
@@ -123,7 +134,8 @@ export type FileBlock =
   | FileChart
   | FileTradePlan
   | FilePrediction
-  | FileDrawing;
+  | FileDrawing
+  | FileEmbed;
 
 export interface PageFile {
   id: string;

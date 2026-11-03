@@ -1,11 +1,12 @@
 import type { FileBlock, FileCandle, FileChart, FileLook, FilePoint, PageFile } from '@shared/pageFile';
 import { formatJson } from '@shared/formatJson';
-import type { CallCell, ChartCell, DrawingCell, Interval, ItemData, MarkLook, Notebook, PlanCell } from '../types';
+import type { CallCell, ChartCell, DrawingCell, EmbedCell, Interval, ItemData, MarkLook, Notebook, PlanCell } from '../types';
+import { embedHeight } from '../embed/model';
 import { BACKGROUNDS, INK_COLORS, NEW_HEIGHT, PEN_TOOLS, SIZES, drawingFileName, type Stroke } from '../drawing/model';
 import { decodePoints, encodedPoints } from '../drawing/strokes';
 import { drawingFromSvg } from '../drawing/svg';
 import { SIDECAR_NAME } from '@shared/ipc';
-import type { NotebookLinkInline, PageBlock } from '../page/blockTypes';
+import { ITEM_BLOCK_TYPES, type NotebookLinkInline, type PageBlock } from '../page/blockTypes';
 import type { Bar } from '../lib/market';
 import { INTERVALS } from '../lib/market';
 import { MARK_COLORS } from '../chart/palette';
@@ -98,12 +99,14 @@ function itemToFile(item: ItemData): FileBlock {
     case 'drawing':
       // The strokes live in the drawing's own file; the page only points at it.
       return { type: 'drawing', id: item.id, file: drawingFileName(item.id) };
+    case 'embed':
+      return { type: 'embed', id: item.id, ...(item.kind === 'url' ? { url: item.url } : { html: item.html }), height: item.height };
   }
 }
 
 function blockToFile(block: PageBlock, items: Notebook['items'], linkText: LinkText): FileBlock | null {
   const item = items[block.id];
-  if (block.type === 'chart' || block.type === 'tradePlan' || block.type === 'prediction' || block.type === 'drawing') return item ? itemToFile(item) : null;
+  if ((ITEM_BLOCK_TYPES as readonly string[]).includes(block.type)) return item ? itemToFile(item) : null;
   const text = () => inlineToMarkup(block.content, linkText);
   switch (BLOCK_TO_FILE[block.type] ?? 'paragraph') {
     case 'heading': {
@@ -247,6 +250,12 @@ function planFromFile(raw: Raw, id: string): PlanCell {
   return { id, type: 'plan', side: raw.side === 'short' ? 'short' : 'long', entry: num(raw.entry), stop: num(raw.stop), target: num(raw.target), reason: str(raw.reason) };
 }
 
+/** An embed shows its web address when it has one, and its HTML otherwise. */
+function embedFromFile(raw: Raw, id: string): EmbedCell {
+  const url = str(raw.url).trim();
+  return { id, type: 'embed', kind: url ? 'url' : 'html', html: str(raw.html), url, height: embedHeight(raw.height) };
+}
+
 function callFromFile(raw: Raw, id: string): CallCell {
   const bars = num(raw.bars);
   return { id, type: 'call', direction: raw.direction === 'down' ? 'down' : 'up', bars: bars !== null && bars >= 1 ? Math.round(bars) : 10, reason: str(raw.reason) };
@@ -359,6 +368,8 @@ function blocksFromFile(rawBlocks: unknown, items: Record<string, ItemData>, ctx
         return itemBlock('tradePlan', planFromFile);
       case 'prediction':
         return itemBlock('prediction', callFromFile);
+      case 'embed':
+        return itemBlock('embed', embedFromFile);
       case 'drawing': {
         // A drawing's id names its file, so it must be safe as a file name, and its own on the page.
         const rawId = typeof raw.id === 'string' ? raw.id : '';

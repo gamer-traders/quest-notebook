@@ -102,8 +102,20 @@ export interface DrawingCell {
   strokes: Stroke[];
 }
 
-/** Data behind an item block (chart, trade plan, prediction or drawing) on a page. */
-export type ItemData = ChartCell | PlanCell | CallCell | DrawingCell;
+/** A piece of the web on the page: HTML with its own CSS and scripts, or a web page by its address. */
+export interface EmbedCell {
+  id: string;
+  type: 'embed';
+  /** Which one shows. The other is kept while the page is open, so switching back loses nothing, but isn't saved. */
+  kind: 'html' | 'url';
+  html: string;
+  url: string;
+  /** How tall it shows, in pixels. */
+  height: number;
+}
+
+/** Data behind an item block (chart, trade plan, prediction, drawing or embed) on a page. */
+export type ItemData = ChartCell | PlanCell | CallCell | DrawingCell | EmbedCell;
 
 /** One of the owner's own top-level groups of pages. */
 export interface Space {

@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import type { ChartCell, Interval, ItemData } from '../types';
 import { NEW_HEIGHT, type Background as DrawingBackground } from '../drawing/model';
+import { EMBED_HEIGHT } from '../embed/model';
 import { INTERVAL_LABEL, INTERVAL_SEC, useBars, type BarsState } from './market';
 import { candleNumber, customBarSet } from './customData';
 import { formatMoment } from './format';
@@ -35,7 +36,7 @@ export function newChart(partial: Partial<ChartCell> = {}): ChartCell {
   };
 }
 
-export function newItem(type: 'chart' | 'plan' | 'call' | 'drawing', chartAbove: ChartCell | null, background: DrawingBackground = 'blank'): ItemData {
+export function newItem(type: ItemData['type'], chartAbove: ChartCell | null, background: DrawingBackground = 'blank'): ItemData {
   switch (type) {
     case 'chart':
       return newChart(chartAbove ? { symbol: chartAbove.symbol, interval: chartAbove.interval } : {});
@@ -45,6 +46,8 @@ export function newItem(type: 'chart' | 'plan' | 'call' | 'drawing', chartAbove:
       return { id: uid(), type: 'call', direction: 'up', bars: 10, reason: '' };
     case 'drawing':
       return { id: uid(), type: 'drawing', height: NEW_HEIGHT, background, strokes: [] };
+    case 'embed':
+      return { id: uid(), type: 'embed', kind: 'html', html: '', url: '', height: EMBED_HEIGHT };
   }
 }
 
@@ -58,6 +61,8 @@ export function itemText(item: ItemData): string {
       return item.reason;
     case 'drawing':
       return '';
+    case 'embed':
+      return item.kind === 'url' ? item.url : '';
   }
 }
 

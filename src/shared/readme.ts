@@ -1,5 +1,5 @@
 /** Which version of the README this is. A README an earlier app version wrote is replaced by this one. */
-export const README_MARKER = '<!-- quest-notebook-readme: 4 -->';
+export const README_MARKER = '<!-- quest-notebook-readme: 5 -->';
 
 /** The file format, from the folder's layout on: what the README explains, and the guide for AI agents repeats. */
 export const FORMAT_REFERENCE = `## Layout
@@ -72,6 +72,7 @@ AGENTS.md                     the guide for AI agents (CLAUDE.md and GEMINI.md b
 | \`chart\` | see below |
 | \`tradePlan\` | \`id\`, \`side\` (\`long\` or \`short\`), \`entry\`, \`stop\`, \`target\` (numbers or \`null\`), \`reason\` |
 | \`prediction\` | \`id\`, \`direction\` (\`up\` or \`down\`), \`bars\` (how many candles later it's checked), \`reason\` |
+| \`embed\` | \`id\`, \`html\` or \`url\`, \`height\`: see below |
 
 - **Nesting:** any block can have \`children\`, a list of blocks nested under it, as in an indented list.
 - **Plans and predictions** are checked against the nearest chart above them on the page.
@@ -95,6 +96,21 @@ AGENTS.md                     the guide for AI agents (CLAUDE.md and GEMINI.md b
 
 - **Colours:** \`yellow\`, \`blue\`, \`green\`, \`red\`, \`purple\` or \`gray\`.
 - **Line styles:** \`line\` is \`solid\`, \`dashed\` or \`dotted\`, and \`width\` is \`thin\`, \`normal\` or \`thick\`.
+
+### Embeds
+
+An \`embed\` block shows a piece of the web on the page:
+
+\`\`\`json
+{ "type": "embed", "id": "h6j3w9e2", "html": "<style>p { color: #1d5bc2 }</style><p>Hello</p><script>console.log('hi')</script>", "height": 300 }
+{ "type": "embed", "id": "w3b8n5r2", "url": "https://example.com/", "height": 600 }
+\`\`\`
+
+- **\`html\`** is a whole web page in one string, with its CSS and scripts. It can load scripts, styles and data from the web.
+- **\`url\`** shows the web page at that address, \`http\` or \`https\`. Some sites refuse to be shown inside another app, and stay blank.
+- **One or the other.** When a block has both, \`url\` shows, and \`html\` is dropped the next time the app saves the page.
+- **\`height\`** is in pixels, from 80 to 4000.
+- **Sealed off.** An embed runs in a frame of its own. It can't reach the app, the workspace's files or the pages, and \`html\` has no \`localStorage\` or cookies.
 
 ## Drawings
 
