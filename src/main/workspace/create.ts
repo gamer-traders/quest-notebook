@@ -1,9 +1,11 @@
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { formatJson } from '@shared/formatJson';
 import type { WorkspaceConfig } from '@shared/ipc';
 import { safeName } from '@shared/names';
 import { README_MARKER, WORKSPACE_README } from '@shared/readme';
+import { GUIDE_FILES, GUIDE_VERSION, guideVersionOf } from '@shared/guide';
+import { writeFileAtomic } from './paths';
 import { CONFIG_PATH } from './scan';
 
 const FIRST_SPACES = ['Journal', 'Markets', 'Lessons'];
@@ -25,6 +27,29 @@ async function refreshReadme(root: string) {
   }
 }
 
+/**
+ * The guides AI tools read, kept as the app writes them: a missing one is written, and one an older version of the
+ * app wrote is replaced. A file someone else wrote, or one whose version mark was taken out, is theirs. A guide that
+ * can't be written never stops the workspace from opening.
+ */
+async function writeGuides(root: string) {
+  for (const [rel, text] of Object.entries(GUIDE_FILES)) {
+    const path = join(root, rel);
+    try {
+      const info = await stat(path).catch(() => null);
+      if (info && !info.isFile()) continue;
+      if (info) {
+        const version = guideVersionOf(await readFile(path, 'utf8'));
+        if (version === null || version >= GUIDE_VERSION) continue;
+      }
+      await mkdir(dirname(path), { recursive: true });
+      await writeFileAtomic(path, text);
+    } catch (error) {
+      console.error(`Couldn't write the AI guide ${rel}:`, error);
+    }
+  }
+}
+
 async function writeConfig(root: string, config: WorkspaceConfig) {
   await mkdir(join(root, '.quest'), { recursive: true });
   await writeFile(join(root, CONFIG_PATH), formatJson(config), 'utf8');
@@ -38,6 +63,7 @@ export async function createWorkspace(parentDir: string, name: string): Promise<
   for (const space of FIRST_SPACES) await mkdir(join(root, space), { recursive: true });
   await writeConfig(root, { format: 1, name: name.trim() || basename(root), spaces: FIRST_SPACES, journalSpace: 'Journal' });
   await writeReadme(root);
+  await writeGuides(root);
   return root;
 }
 
@@ -58,11 +84,13 @@ export async function adoptFolder(root: string, confirm?: (root: string) => Prom
   if (!info?.isDirectory()) throw new Error(`Couldn't find ${root}`);
   if (await exists(join(root, CONFIG_PATH))) {
     await refreshReadme(root);
+    await writeGuides(root);
     return { isNew: false };
   }
   const hasFiles = (await readdir(root)).some((name) => !name.startsWith('.'));
   if (hasFiles && confirm && !(await confirm(root))) throw new AdoptDeclined(root);
   await writeConfig(root, { format: 1, name: basename(root), spaces: [], journalSpace: null });
   await writeReadme(root);
+  await writeGuides(root);
   return { isNew: true };
 }

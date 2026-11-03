@@ -1,18 +1,13 @@
 /** Which version of the README this is. A README an earlier app version wrote is replaced by this one. */
-export const README_MARKER = '<!-- quest-notebook-readme: 3 -->';
+export const README_MARKER = '<!-- quest-notebook-readme: 4 -->';
 
-/** The README.md written into a new workspace: the file format, for the people and AI tools that open the folder. */
-export const WORKSPACE_README = `# Quest Notebook workspace
-${README_MARKER}
-
-This folder is a Quest Notebook workspace: a trading notebook whose pages are plain JSON files.
-The Quest Notebook app shows them as Notion-style pages with live charts. You can also read and edit
-them directly, by hand or with an AI tool. While the app is open, it picks up changes within a second.
-
-## Layout
+/** The file format, from the folder's layout on: what the README explains, and the guide for AI agents repeats. */
+export const FORMAT_REFERENCE = `## Layout
 
 \`\`\`
-README.md                     this file
+README.md                     about this folder, for people
+AGENTS.md                     the guide for AI agents (CLAUDE.md and GEMINI.md bring it in)
+.claude/, .agents/            the same guide, where Claude Code and Antigravity look for it
 .quest/workspace.json         workspace settings: name, space order, the journal space
 .quest/state.json             what the app was showing (the app's own; don't edit)
 <Space>/                      a top-level folder is a space, named after the folder
@@ -28,7 +23,7 @@ README.md                     this file
 - **Renaming a file:** the file's new name becomes the page's title.
 - **A page and its folder go together.** Rename or move the folder along with the page file. If the folder holds only drawings and you forget it, the app moves it after the page file for you.
 - **A folder with no page file:** it becomes a page, and the app writes its \`.json\`. A folder holding only drawing files doesn't: it's what a page left behind.
-- **This README** is rewritten by the app when the file format changes. Keep your own notes in pages.
+- **README.md and the AI guides** are rewritten by the app when the file format changes. Keep your own notes in pages.
 
 ## Page file
 
@@ -172,3 +167,13 @@ The \`text\` of a block uses Markdown-style marks:
 - **Deleting** a page or space in the app moves its files to the system Trash.
 - **An edit wins over a delete.** A page file deleted while the page has edits in the app not yet saved comes back, with its drawings, and the app says so. A page deleted in the app while its file changes on disk comes back too, with the change.
 `;
+
+/** The README.md written into a new workspace: the file format, for the people and AI tools that open the folder. */
+export const WORKSPACE_README = `# Quest Notebook workspace
+${README_MARKER}
+
+This folder is a Quest Notebook workspace: a trading notebook whose pages are plain JSON files.
+The Quest Notebook app shows them as Notion-style pages with live charts. You can also read and edit
+them directly, by hand or with an AI tool. While the app is open, it picks up changes within a second.
+
+${FORMAT_REFERENCE}`;

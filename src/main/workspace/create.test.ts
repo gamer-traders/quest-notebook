@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { AdoptDeclined, adoptFolder, createWorkspace } from './create';
 import { WORKSPACE_README } from '@shared/readme';
+import { GUIDE_FILES } from '@shared/guide';
 
 const tmp = () => mkdtemp(join(tmpdir(), 'quest-create-'));
 
@@ -11,7 +12,7 @@ test('a new workspace gets its settings, three spaces and a README', async () =>
   const parent = await tmp();
   const root = await createWorkspace(parent, 'Quest: Trading');
   expect(root).toBe(join(parent, 'Quest- Trading'));
-  expect((await readdir(root)).sort()).toEqual(['.quest', 'Journal', 'Lessons', 'Markets', 'README.md']);
+  expect((await readdir(root)).sort()).toEqual(['.agents', '.claude', '.quest', 'AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'Journal', 'Lessons', 'Markets', 'README.md']);
   expect(JSON.parse(await readFile(join(root, '.quest/workspace.json'), 'utf8'))).toEqual({
     format: 1,
     name: 'Quest: Trading',
@@ -98,4 +99,58 @@ test('a README an earlier version of the app wrote is brought up to date, and an
 
 test('the README says which version of it this is', () => {
   expect(WORKSPACE_README).toMatch(/<!-- quest-notebook-readme: \d+ -->/);
+});
+
+const GUIDE_PATHS = ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md', '.claude/skills/quest-notebook/SKILL.md', '.agents/rules/quest-notebook.md'];
+const read = (root: string, rel: string) => readFile(join(root, rel), 'utf8');
+
+test('a new workspace gets the guides AI tools read: the full guide, and pointers to it where a tool looks elsewhere', async () => {
+  const root = await createWorkspace(await tmp(), 'Guided');
+  expect(Object.keys(GUIDE_FILES).sort()).toEqual([...GUIDE_PATHS].sort());
+  for (const rel of GUIDE_PATHS) expect(await read(root, rel)).toBe(GUIDE_FILES[rel]);
+  const agents = await read(root, 'AGENTS.md');
+  expect(agents).toContain('"type": "tradePlan"');
+  expect(agents).toContain('## Drawings');
+  // Claude Code and Gemini read their own file, which brings in AGENTS.md.
+  expect(await read(root, 'CLAUDE.md')).toMatch(/^@AGENTS\.md$/m);
+  expect(await read(root, 'GEMINI.md')).toMatch(/^@AGENTS\.md$/m);
+  // A Claude Code skill starts with its name and when to use it.
+  expect(await read(root, '.claude/skills/quest-notebook/SKILL.md')).toMatch(/^---\nname: quest-notebook\ndescription: .+\n---\n/);
+  expect(await read(root, '.claude/skills/quest-notebook/SKILL.md')).toContain('"type": "tradePlan"');
+});
+
+test('a folder that becomes a workspace gets the guides too, unless the person declines', async () => {
+  const root = await tmp();
+  await adoptFolder(root);
+  for (const rel of GUIDE_PATHS) expect(await read(root, rel)).toBe(GUIDE_FILES[rel]);
+});
+
+test('opening a workspace brings the app’s older guides up to date and writes missing ones', async () => {
+  const root = await tmp();
+  await adoptFolder(root);
+  await writeFile(join(root, 'AGENTS.md'), '# Old guide\n<!-- quest-notebook-guide: 0 -->\nOld advice.\n');
+  await rm(join(root, 'GEMINI.md'));
+  await rm(join(root, '.claude'), { recursive: true });
+  await adoptFolder(root);
+  for (const rel of GUIDE_PATHS) expect(await read(root, rel)).toBe(GUIDE_FILES[rel]);
+});
+
+test('a guide someone else wrote, or one whose version mark was removed to keep edits, is left alone', async () => {
+  const root = await tmp();
+  await adoptFolder(root);
+  await writeFile(join(root, 'CLAUDE.md'), '# My own rules\n');
+  const edited = GUIDE_FILES['AGENTS.md'].replace(/<!-- quest-notebook-guide: \d+ -->\n/, '') + '\nMy own note.\n';
+  await writeFile(join(root, 'AGENTS.md'), edited);
+  await adoptFolder(root);
+  expect(await read(root, 'CLAUDE.md')).toBe('# My own rules\n');
+  expect(await read(root, 'AGENTS.md')).toBe(edited);
+});
+
+test('a guide written by a newer version of the app is left alone', async () => {
+  const root = await tmp();
+  await adoptFolder(root);
+  const newer = '# Newer guide\n<!-- quest-notebook-guide: 999 -->\n';
+  await writeFile(join(root, 'AGENTS.md'), newer);
+  await adoptFolder(root);
+  expect(await read(root, 'AGENTS.md')).toBe(newer);
 });
