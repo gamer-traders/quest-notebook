@@ -1,5 +1,5 @@
 /** Which version of the README this is. A README an earlier app version wrote is replaced by this one. */
-export const README_MARKER = '<!-- quest-notebook-readme: 6 -->';
+export const README_MARKER = '<!-- quest-notebook-readme: 7 -->';
 
 /** The file format, from the folder's layout on: what the README explains, and the guide for AI agents repeats. */
 export const FORMAT_REFERENCE = `## Layout
@@ -10,6 +10,7 @@ AGENTS.md                     the guide for AI agents (CLAUDE.md and GEMINI.md b
 .claude/, .agents/            the same guide, where Claude Code and Antigravity look for it
 .quest/workspace.json         workspace settings: name, space order, the journal space
 .quest/state.json             what the app was showing (the app's own; don't edit)
+.quest/chats/                 the Claude panel's chats (the app's own; don't edit)
 <Space>/                      a top-level folder is a space, named after the folder
   <Page title>.json           a page
   <Notes>.md                  a Markdown file, shown beside the pages
@@ -26,6 +27,7 @@ AGENTS.md                     the guide for AI agents (CLAUDE.md and GEMINI.md b
 - **A page and its folder go together.** Rename or move the folder along with the page file. If the folder holds only drawings and you forget it, the app moves it after the page file for you.
 - **A folder with no page file:** it becomes a page, and the app writes its \`.json\`. A folder holding only drawing files doesn't: it's what a page left behind.
 - **README.md and the AI guides** are rewritten by the app when the file format changes. Keep your own notes in pages.
+- **The app's Claude panel** edits only page files and drawing files inside space folders. It never writes README.md, the AI guides, \`.quest/\` or other files.
 
 ## Page file
 
@@ -71,7 +73,7 @@ AGENTS.md                     the guide for AI agents (CLAUDE.md and GEMINI.md b
 | \`callout\` | \`text\`: a note set apart |
 | \`divider\` | none |
 | \`code\` | \`language\`, \`code\`: raw text, with no markup |
-| \`chart\` | see below |
+| \`chart\` | a trading chart: see below |
 | \`tradePlan\` | \`id\`, \`side\` (\`long\` or \`short\`), \`entry\`, \`stop\`, \`target\` (numbers or \`null\`), \`reason\` |
 | \`prediction\` | \`id\`, \`direction\` (\`up\` or \`down\`), \`bars\` (how many candles later it's checked), \`reason\` |
 | \`embed\` | \`id\`, \`html\` or \`url\`, \`height\`: see below |
@@ -80,7 +82,7 @@ AGENTS.md                     the guide for AI agents (CLAUDE.md and GEMINI.md b
 - **Plans and predictions** are checked against the nearest chart above them on the page.
 - **Unknown block types** are kept as code blocks holding their JSON, so nothing is lost.
 
-### Charts
+### Trading charts
 
 | field | meaning |
 |---|---|

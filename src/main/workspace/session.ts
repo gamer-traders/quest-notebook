@@ -1,17 +1,59 @@
 import { mkdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { formatJson } from '@shared/formatJson';
-import type { DiskDelta, FlushBatch, FlushResult, MarkdownSave, MarkdownSaveResult, UiState, WorkspaceSnapshot } from '@shared/ipc';
+import type { DiskDelta, FileChange, FlushBatch, FlushResult, MarkdownSave, MarkdownSaveResult, UiState, WorkspaceSnapshot } from '@shared/ipc';
 import { applyFlush } from './apply';
 import { insideRoot, writeFileAtomic } from './paths';
-import { STATE_PATH, scanWorkspace } from './scan';
-import { diffScans, knownAfterFlush, knownFromScan, watchWorkspace, type Known } from './watch';
+import { STATE_PATH, scanWorkspace, type ScanIndex } from './scan';
+import { diffScans, fileChanges, knownAfterFlush, knownFromScan, watchWorkspace, type Known } from './watch';
+
+/** A page or drawing file the app rewrote. `path` is relative to the workspace folder, with '/' between parts. */
+export interface RepairedFile {
+  path: string;
+  /** Null for a file that is new. */
+  before: string | null;
+  after: string;
+}
 
 export interface SessionEvents {
   /** Something changed on disk outside the app. */
   change(delta: DiskDelta): void;
   /** The workspace folder is gone. */
   lost(message: string): void;
+  /** The page and drawing files that changed on disk outside the app, by what they held before. */
+  fileChanges?(changes: FileChange[]): void;
+  /**
+   * The window saved pages only to fill in or tidy what an outside write left (a batch's `repairs`): the files of each
+   * such page that changed, by what they held before and after. The page file comes first, and is listed whenever any of
+   * its files changed, even if it didn't, so its text can be checked too.
+   */
+  repaired?(files: RepairedFile[]): void;
+}
+
+/** A page's file and drawing files as main knows them, copied, so a flush updating the index in place leaves them be. */
+interface PageFiles {
+  path: string;
+  text: string;
+  /** Drawing file path → text. */
+  drawings: Map<string, string>;
+}
+
+function pageFiles(index: ScanIndex, id: string): PageFiles | null {
+  const entry = index.pages.get(id);
+  if (!entry || entry.error !== undefined) return null;
+  const folder = entry.path.replace(/\.json$/i, '');
+  return { path: entry.path, text: entry.text, drawings: new Map(Object.entries(entry.sidecars ?? {}).map(([name, file]) => [`${folder}/${name}`, file.text])) };
+}
+
+/** What a save changed in a page's files: the page file, then its drawing files that changed. Nothing for a page that moved. */
+function changedFiles(before: PageFiles, after: PageFiles | null): RepairedFile[] {
+  if (!after || after.path !== before.path) return [];
+  const drawings = [...after.drawings]
+    .filter(([path, text]) => before.drawings.get(path) !== text)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([path, text]) => ({ path, before: before.drawings.get(path) ?? null, after: text }));
+  if (before.text === after.text && drawings.length === 0) return [];
+  return [{ path: after.path, before: before.text, after: after.text }, ...drawings];
 }
 
 /**
@@ -76,7 +118,8 @@ export class WorkspaceSession {
       const scanned = await scanWorkspace(this.root, this.known.index);
       this.known = knownFromScan(scanned);
       this.snapshot = { ...scanned.snapshot, isNew: this.snapshot.isNew };
-      return this.snapshot;
+      // A window loading this has seen every change reported so far, so its saves aren't refused as stale.
+      return { ...this.snapshot, seq: this.seq };
     });
   }
 
@@ -93,9 +136,33 @@ export class WorkspaceSession {
       const seen = batch.seenSeq ?? this.seq;
       const isStale = (id: string) => (this.changedAt.get(id) ?? 0) > seen;
       const stale = [...batch.saves.map((s) => s.id), ...batch.deletes].filter(isStale);
-      const fresh = { ...batch, saves: batch.saves.filter((s) => !isStale(s.id)), deletes: batch.deletes.filter((id) => !isStale(id)) };
+      // Pages saved only to tidy what an outside write left, as they were on disk before. The tidy-up was planned from
+      // what main last knew: if the page file holds something else by now (a write not yet seen), it's left for the
+      // window to plan again rather than written over.
+      const repairs = new Set(Array.isArray(batch.repairs) ? batch.repairs : []);
+      const tidied: { id: string; files: PageFiles }[] = [];
+      const unseen = new Set<string>();
+      for (const save of batch.saves) {
+        if (!repairs.has(save.id) || isStale(save.id)) continue;
+        const files = pageFiles(this.known.index, save.id);
+        if (!files) continue;
+        const onDisk = await readFile(insideRoot(this.root, files.path), 'utf8').catch(() => null);
+        if (onDisk === files.text) tidied.push({ id: save.id, files });
+        else unseen.add(save.id);
+      }
+      stale.push(...unseen);
+      const fresh = { ...batch, saves: batch.saves.filter((s) => !isStale(s.id) && !unseen.has(s.id)), deletes: batch.deletes.filter((id) => !isStale(id)) };
       const result = await applyFlush(this.root, this.known.index, fresh, { trash: this.trash, now: () => new Date() });
       this.known = knownAfterFlush(this.known, fresh);
+      const repaired = tidied.flatMap(({ id, files }) => changedFiles(files, pageFiles(this.known.index, id)));
+      if (repaired.length) {
+        // What was saved stays saved, whatever the listener does.
+        try {
+          this.events.repaired?.(repaired);
+        } catch (error) {
+          console.error('Reporting a tidy-up failed:', error);
+        }
+      }
       const all = [...stale, ...(result.stale ?? [])];
       return all.length ? { ...result, stale: all } : result;
     });
@@ -140,25 +207,63 @@ export class WorkspaceSession {
     });
   }
 
-  private rescan(): Promise<void> {
+  /** Reads the folder again now, in turn: afterwards every outside write made before the call has been seen and reported. */
+  settle(): Promise<void> {
+    return this.rescan();
+  }
+
+  /**
+   * Runs `work` in the queue, so no scan reads the folder half way through it. With `rescanAfter`, the folder is read
+   * again in the same turn of the queue, even if `work` fails: what it wrote is reported before anything queued behind
+   * it runs, so a save planned before it is refused as stale.
+   */
+  exclusive<T>(work: () => Promise<T>, opts: { rescanAfter?: boolean } = {}): Promise<T> {
     return this.turn(async () => {
-      if (this.closed) return;
-      if (!(await this.present())) return this.gone();
+      if (this.closed) throw new Error('This workspace is closed');
       try {
-        const next = await scanWorkspace(this.root, this.known.index);
-        const delta = diffScans(this.known, next);
-        this.known = knownFromScan(next);
-        this.snapshot = { ...next.snapshot, isNew: false };
-        if (delta) {
-          const seq = ++this.seq;
-          for (const page of delta.pages) this.changedAt.set(page.id, seq);
-          for (const id of delta.removed) this.changedAt.set(id, seq);
-          this.events.change({ ...delta, seq });
-        }
-      } catch (error) {
-        console.error('Reading the workspace after a change failed:', error);
+        return await work();
+      } finally {
+        if (opts.rescanAfter) await this.rescanNow();
       }
     });
+  }
+
+  pageIdForPath(path: string): string | undefined {
+    return this.snapshot.pages.find((p) => p.path === path)?.id;
+  }
+
+  pageInfo(id: string): { path: string; title: string } | undefined {
+    const record = this.snapshot.pages.find((p) => p.id === id);
+    if (!record) return undefined;
+    const title = (record.file as { title?: unknown } | undefined)?.title;
+    const name = record.path.slice(record.path.lastIndexOf('/') + 1).replace(/\.json$/i, '');
+    return { path: record.path, title: typeof title === 'string' && title.trim() ? title : name };
+  }
+
+  private rescan(): Promise<void> {
+    return this.turn(() => this.rescanNow());
+  }
+
+  /** A rescan's body, for a caller already holding the queue. */
+  private async rescanNow(): Promise<void> {
+    if (this.closed) return;
+    if (!(await this.present())) return this.gone();
+    try {
+      const next = await scanWorkspace(this.root, this.known.index);
+      const delta = diffScans(this.known, next);
+      const changes = fileChanges(this.known, next);
+      this.known = knownFromScan(next);
+      this.snapshot = { ...next.snapshot, isNew: false };
+      if (delta) {
+        const seq = ++this.seq;
+        for (const page of delta.pages) this.changedAt.set(page.id, seq);
+        for (const id of delta.removed) this.changedAt.set(id, seq);
+        this.events.change({ ...delta, seq });
+      }
+      if (changes.length) this.events.fileChanges?.(changes);
+    } catch (error) {
+      console.error('Reading the workspace after a change failed:', error);
+    }
   }
 
   close(): void {

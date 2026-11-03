@@ -11,6 +11,7 @@ import { OwnDataPanel, type Replacement } from './OwnDataPanel';
 import { MarkEditor, type MarkTarget } from './MarkEditor';
 import { readPalette } from '../chart/palette';
 import { useStore } from '../store';
+import { useLocked } from '../claude/store';
 
 interface Props {
   notebookId: string;
@@ -37,12 +38,17 @@ function toInputValue(sec: number) {
 export function ChartCellView({ notebookId, cell, linked }: Props) {
   const updateItem = useStore((s) => s.updateItem);
   const theme = useStore((s) => s.theme);
-  const update = (patch: Partial<ChartCell>) => updateItem<ChartCell>(notebookId, cell.id, patch);
+  // While Claude works on the page the chart can be read, panned and zoomed, but nothing on it changes.
+  const locked = useLocked(notebookId);
+  const update = (patch: Partial<ChartCell>) => {
+    if (!locked) updateItem<ChartCell>(notebookId, cell.id, patch);
+  };
   const bars = useChartBars(cell);
   const custom = isCustom(cell);
   const ownCandles = cell.candles ?? [];
 
-  const [tool, setTool] = useState<Tool>('move');
+  const [picked, setTool] = useState<Tool>('move');
+  const tool: Tool = locked ? 'move' : picked;
   const [symbolDraft, setSymbolDraft] = useState(cell.symbol);
   const [momentOpen, setMomentOpen] = useState(false);
   const [pinDraft, setPinDraft] = useState<{ time: number; text: string } | null>(null);

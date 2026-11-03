@@ -8,6 +8,7 @@ import { markdownSaves } from '../markdown/saving';
 import { deltaToNotebooks, drawingsIn, snapshotToState } from './load';
 import { startSync, useSaveStatus, type SyncHandle } from './sync';
 import type { Notebook } from '../types';
+import { bindClaude, useClaude } from '../claude/store';
 
 let sync: SyncHandle | null = null;
 
@@ -68,7 +69,9 @@ export function startWorkspace(snapshot: WorkspaceSnapshot): void {
   useDiskNotice.setState({ text: null });
   const loaded = snapshotToState(snapshot);
   useStore.getState().loadWorkspace(snapshot.root, snapshot.name, loaded);
-  sync = startSync(window.quest.workspace, useStore, loaded.repaired, loaded.drawingsToWrite);
+  sync = startSync(window.quest.workspace, useStore, loaded.repaired, loaded.drawingsToWrite, snapshot.seq ?? 0);
+  // Claude starts this workspace with a new chat, and looks at its chats.
+  useClaude.getState().reset();
 }
 
 /** Stops keeping a workspace in step, after sending what it hasn't yet. */
@@ -103,6 +106,10 @@ export function applyDisk(delta: DiskDelta): void {
     pages: delta.pages.filter((p) => !pending.has(p.id)),
     removed: delta.removed.filter((id) => !pending.has(id)),
   };
+  // During a turn, Claude's reply says which of its changes are about to be saved over this way.
+  for (const id of [...delta.pages.map((p) => p.id), ...delta.removed]) {
+    if (pending.has(id)) useClaude.getState().markNotApplied(id);
+  }
   const { repaired, drawingsToWrite } = deltaToNotebooks(filtered, current);
   sync.applyFromDisk(() => useStore.getState().applyDiskDelta(filtered), delta.seq);
   // Pages renamed through their file name, or missing fields, are written back whole.
@@ -179,7 +186,9 @@ export async function createAndOpen(parentDir: string, name: string, samples: bo
 
 /** At start: listens to main, and shows the workspace main reopened, if any. */
 export async function bootWorkspace(): Promise<void> {
-  const { workspace, app } = window.quest;
+  const { workspace, app, claude } = window.quest;
+  // Also listens for Claude's events: once, for the window's whole life. Each turn saves everything first.
+  bindClaude(claude, { flush: flushWorkspace });
   workspace.onDiskChange(applyDisk);
   workspace.onLost((message) => {
     sync?.stop();

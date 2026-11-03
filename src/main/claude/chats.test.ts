@@ -1,0 +1,221 @@
+import { mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, test } from 'vitest';
+import type { Chat } from '@shared/ipc';
+import { testImage } from './__fixtures__/image-bytes';
+import { CHATS_DIR, chatTitle, deleteChat, listChats, newChatId, parseReference, readChat, writeChat } from './chats';
+import { IMAGES_DIR, saveImages } from './images';
+
+const chat = (id: string, updated: string, title = 'Hello'): Chat => ({
+  id,
+  title,
+  sessionId: null,
+  created: '2026-01-01T00:00:00.000Z',
+  updated,
+  messages: [{ id: 'm1', role: 'user', text: 'Hi', created: updated }],
+});
+const tmp = () => mkdtemp(join(tmpdir(), 'quest-chats-'));
+
+describe('chats on disk', () => {
+  test('write, list and read round-trip, newest first', async () => {
+    const root = await tmp();
+    const old = chat('aaaaaaaa', '2026-01-02T00:00:00.000Z');
+    const fresh = chat('bbbbbbbb', '2026-01-03T00:00:00.000Z', 'Newer');
+    await writeChat(root, old);
+    await writeChat(root, fresh);
+    expect(await listChats(root)).toEqual([
+      { id: 'bbbbbbbb', title: 'Newer', updated: fresh.updated },
+      { id: 'aaaaaaaa', title: 'Hello', updated: old.updated },
+    ]);
+    expect(await readChat(root, 'aaaaaaaa')).toEqual(old);
+  });
+
+  test('a missing folder lists nothing', async () => {
+    expect(await listChats(await tmp())).toEqual([]);
+  });
+
+  test('corrupt and misshapen files are skipped', async () => {
+    const root = await tmp();
+    await writeChat(root, chat('good0001', '2026-01-02T00:00:00.000Z'));
+    const dir = join(root, CHATS_DIR);
+    await writeFile(join(dir, 'corrupt1.json'), '{not json');
+    await writeFile(join(dir, 'badmsg01.json'), JSON.stringify({ ...chat('badmsg01', 'x'), messages: [{ id: 'm', role: 'robot', text: 'x' }] }));
+    await writeFile(join(dir, 'notchat1.json'), JSON.stringify({ hello: 'world' }));
+    await writeFile(join(dir, 'mismatch.json'), JSON.stringify(chat('othername', 'x')));
+    await writeFile(join(dir, 'notes.txt'), 'notes');
+    expect((await listChats(root)).map((c) => c.id)).toEqual(['good0001']);
+    expect(await readChat(root, 'corrupt1')).toBeNull();
+    expect(await readChat(root, 'badmsg01')).toBeNull();
+    expect(await readChat(root, 'notchat1')).toBeNull();
+    expect(await readChat(root, 'nothere1')).toBeNull();
+  });
+
+  test('a chat whose session id is not a UUID is not read', async () => {
+    const root = await tmp();
+    await writeChat(root, { ...chat('uuid0001', '2026-01-02T00:00:00.000Z'), sessionId: 'e607f87c-c213-4764-b30b-b92b8927eec4' });
+    const dir = join(root, CHATS_DIR);
+    await writeFile(join(dir, 'option01.json'), JSON.stringify({ ...chat('option01', 'x'), sessionId: '--settings=evil.json' }));
+    await writeFile(join(dir, 'number01.json'), JSON.stringify({ ...chat('number01', 'x'), sessionId: 5 }));
+    expect((await listChats(root)).map((c) => c.id)).toEqual(['uuid0001']);
+    expect(await readChat(root, 'option01')).toBeNull();
+    expect(await readChat(root, 'number01')).toBeNull();
+    expect((await readChat(root, 'uuid0001'))?.sessionId).toBe('e607f87c-c213-4764-b30b-b92b8927eec4');
+  });
+
+  test('a damaged message is read with only what is well-formed: bad fields and bad items are dropped, the chat is kept', async () => {
+    const root = await tmp();
+    await mkdir(join(root, CHATS_DIR), { recursive: true });
+    const created = '2026-01-02T00:00:00.000Z';
+    const goodRef = { kind: 'selection', pageId: 'a', title: 'A', text: 'x' };
+    const goodAction = { verb: 'edited', id: 't1', path: 'Markets/A.json', refused: true };
+    const goodChange = { path: 'Markets/A.json', pageId: 'a', kind: 'edited', drawing: false, before: 'old', after: 'new' };
+    const messages = [
+      {
+        id: 'm1',
+        role: 'user',
+        text: 'Hi',
+        created,
+        references: [goodRef, { kind: 'selection', pageId: 'a', title: 'A' }, { kind: 'link', pageId: 'a', title: 'A' }, null, 'x', { kind: 'page', pageId: 5, title: 'A' }],
+      },
+      {
+        id: 'm2',
+        role: 'assistant',
+        text: 'Done',
+        created,
+        actions: [goodAction, { verb: 'flew' }, { path: 'x' }, 7, { verb: 'read', path: 5, detail: ['x'], refused: 'yes' }],
+        changes: [goodChange, { ...goodChange, kind: 'moved' }, { ...goodChange, before: 5 }, { ...goodChange, path: null }, { ...goodChange, drawing: 'no' }, 'x', { path: 'Markets/B.json', kind: 'created', drawing: true, before: null, after: '<svg/>', pageId: 5, newSpace: 'yes' }],
+        undone: ['Markets/A.json', 5, null],
+        error: { message: 'boom' },
+      },
+      { id: 'm3', role: 'assistant', text: 'Odd', created, references: 'a', actions: { verb: 'read' }, changes: 'all', undone: 'Markets/A.json', error: 'It broke' },
+    ];
+    await writeFile(join(root, CHATS_DIR, 'damaged1.json'), JSON.stringify({ ...chat('damaged1', created), messages }));
+
+    const read = await readChat(root, 'damaged1');
+    expect(read?.messages).toEqual([
+      { id: 'm1', role: 'user', text: 'Hi', created, references: [goodRef] },
+      {
+        id: 'm2',
+        role: 'assistant',
+        text: 'Done',
+        created,
+        actions: [goodAction, { verb: 'read' }],
+        changes: [goodChange, { path: 'Markets/B.json', kind: 'created', drawing: true, before: null, after: '<svg/>' }],
+        undone: ['Markets/A.json'],
+      },
+      { id: 'm3', role: 'assistant', text: 'Odd', created, error: 'It broke' },
+    ]);
+    expect((await listChats(root)).map((c) => c.id)).toEqual(['damaged1']);
+  });
+
+  test("a message's images are kept only with a good name for this chat and a known type", async () => {
+    const root = await tmp();
+    await mkdir(join(root, CHATS_DIR), { recursive: true });
+    const created = '2026-01-02T00:00:00.000Z';
+    const png = { file: 'images01-0a1b2c3d.png', type: 'image/png' };
+    const jpeg = { file: 'images01-zzzz9999.jpg', type: 'image/jpeg' };
+    const messages = [
+      {
+        id: 'm1',
+        role: 'user',
+        text: '',
+        created,
+        images: [
+          png,
+          { file: 'other001-0a1b2c3d.png', type: 'image/png' },
+          { file: '../images01-0a1b2c3d.png', type: 'image/png' },
+          { file: 'images01-0a1b2c3d.svg', type: 'image/png' },
+          { file: 'images01-0a1b2c3d.png', type: 'image/bmp' },
+          { file: 'images01-0a1b2c3d.png' },
+          { ...jpeg, extra: 1 },
+          null,
+          'images01-0a1b2c3d.png',
+        ],
+      },
+      { id: 'm2', role: 'user', text: 'Hi', created, images: 'images01-0a1b2c3d.png' },
+    ];
+    await writeFile(join(root, CHATS_DIR, 'images01.json'), JSON.stringify({ ...chat('images01', created), messages }));
+    expect((await readChat(root, 'images01'))?.messages).toEqual([
+      { id: 'm1', role: 'user', text: '', created, images: [png, jpeg] },
+      { id: 'm2', role: 'user', text: 'Hi', created },
+    ]);
+  });
+
+  test('block references are read back; one with text over 50,000 characters, where over 200, or either missing is dropped', async () => {
+    const root = await tmp();
+    await mkdir(join(root, CHATS_DIR), { recursive: true });
+    const created = '2026-01-02T00:00:00.000Z';
+    const block = { kind: 'block', pageId: 'a', title: 'A', text: '{ "type": "paragraph" }', where: 'block 1 of 2' };
+    const longest = { ...block, text: 'x'.repeat(50_000), where: 'w'.repeat(200) };
+    const references = [block, longest, { ...block, text: 'x'.repeat(50_001) }, { ...block, where: 'w'.repeat(201) }, { ...block, where: undefined }, { ...block, text: undefined }, { ...block, where: 5 }, { ...block, extra: 1 }];
+    await writeFile(join(root, CHATS_DIR, 'blocks01.json'), JSON.stringify({ ...chat('blocks01', created), messages: [{ id: 'm1', role: 'user', text: 'Hi', created, references }] }));
+    expect((await readChat(root, 'blocks01'))?.messages[0].references).toEqual([block, longest, block]);
+  });
+
+  test('ids that could leave the folder are refused', async () => {
+    const root = await tmp();
+    for (const id of ['../x', 'ABCDEFGH', 'abc']) expect(await readChat(root, id)).toBeNull();
+    await expect(writeChat(root, chat('../evil1', 'x'))).rejects.toThrow();
+    await expect(readdir(join(root, '.quest'))).rejects.toThrow();
+    const trashed: string[] = [];
+    await deleteChat(root, '../x', async (abs) => void trashed.push(abs));
+    expect(trashed).toEqual([]);
+  });
+
+  test('delete trashes the file', async () => {
+    const root = await tmp();
+    await writeChat(root, chat('aaaaaaaa', 'x'));
+    const trashed: string[] = [];
+    await deleteChat(root, 'aaaaaaaa', async (abs) => void trashed.push(abs));
+    expect(trashed).toEqual([join(root, CHATS_DIR, 'aaaaaaaa.json')]);
+    await mkdir(join(root, CHATS_DIR), { recursive: true });
+    await deleteChat(root, 'zzzzzzzz', async (abs) => void trashed.push(abs));
+    expect(trashed).toHaveLength(1);
+  });
+
+  test("delete trashes the chat's images too, and leaves other chats' images", async () => {
+    const root = await tmp();
+    await writeChat(root, chat('aaaaaaaa', 'x'));
+    const mine = await saveImages(root, 'aaaaaaaa', [testImage('image/png'), testImage('image/webp')]);
+    await saveImages(root, 'bbbbbbbb', [testImage('image/png')]);
+    const trashed: string[] = [];
+    await deleteChat(root, 'aaaaaaaa', async (abs) => void trashed.push(abs));
+    expect(trashed[0]).toBe(join(root, CHATS_DIR, 'aaaaaaaa.json'));
+    expect(trashed.slice(1).sort()).toEqual(mine.map((m) => join(root, IMAGES_DIR, m.file)).sort());
+  });
+
+  test("delete trashes a chat's images even when its file is already gone", async () => {
+    const root = await tmp();
+    const [left] = await saveImages(root, 'cccccccc', [testImage('image/gif')]);
+    const trashed: string[] = [];
+    await deleteChat(root, 'cccccccc', async (abs) => void trashed.push(abs));
+    expect(trashed).toEqual([join(root, IMAGES_DIR, left.file)]);
+  });
+});
+
+describe('chatTitle', () => {
+  test('cuts a long line to 60 characters', () => {
+    const title = chatTitle('x'.repeat(100));
+    expect(title).toHaveLength(60);
+    expect(title.endsWith('…')).toBe(true);
+  });
+  test('keeps a short line', () => expect(chatTitle('Short one')).toBe('Short one'));
+  test('uses the first non-empty line', () => expect(chatTitle('\n\n  Hello\nworld')).toBe('Hello'));
+  test('names an empty chat', () => expect(chatTitle('')).toBe('New chat'));
+});
+
+test('newChatId makes 8 characters from a-z0-9', () => {
+  for (let i = 0; i < 50; i++) expect(newChatId()).toMatch(/^[a-z0-9]{8}$/);
+});
+
+describe('parseReference', () => {
+  test('a block reference keeps its own fields only', () => {
+    const block = { kind: 'block', pageId: 'a', title: 'A', text: '[]', where: 'blocks 3–5 of 12' };
+    expect(parseReference({ ...block, extra: 1 })).toEqual(block);
+    expect(parseReference({ ...block, text: '' , where: '' })).toEqual({ ...block, text: '', where: '' });
+    for (const bad of [{ ...block, text: 'x'.repeat(50_001) }, { ...block, where: 'w'.repeat(201) }, { ...block, text: null }, { ...block, where: ['x'] }, { ...block, pageId: 5 }, { ...block, title: undefined }]) {
+      expect(parseReference(bad)).toBeNull();
+    }
+  });
+});

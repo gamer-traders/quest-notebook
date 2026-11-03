@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 're
 import { createPortal } from 'react-dom';
 import type { DrawingCell } from '../types';
 import { useStore } from '../store';
+import { useLocked } from '../claude/store';
 import { DrawingCanvas } from './DrawingCanvas';
 import { DrawingToolbar } from './DrawingToolbar';
 import { GROW_BY, type Background, type Stroke } from './model';
@@ -19,6 +20,8 @@ const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform)
  */
 export function DrawingView({ notebookId, drawing }: { notebookId: string; drawing: DrawingCell }) {
   const pen = usePen();
+  // While Claude works on the page the drawing can be looked at, not changed: no strokes, no undo.
+  const locked = useLocked(notebookId);
   const undo = useRef<Snapshot[]>([]);
   const redo = useRef<Snapshot[]>([]);
   const [, setVersion] = useState(0);
@@ -42,6 +45,7 @@ export function DrawingView({ notebookId, drawing }: { notebookId: string; drawi
 
   /** A change that undo can take back. */
   const change = (next: Partial<Snapshot>) => {
+    if (locked) return;
     undo.current.push(current());
     redo.current = [];
     apply({ ...current(), ...next });
@@ -49,6 +53,7 @@ export function DrawingView({ notebookId, drawing }: { notebookId: string; drawi
   };
 
   const step = (from: { current: Snapshot[] }, to: { current: Snapshot[] }) => {
+    if (locked) return;
     const snapshot = from.current.pop();
     if (!snapshot) return;
     to.current.push(current());
@@ -116,6 +121,7 @@ export function DrawingView({ notebookId, drawing }: { notebookId: string; drawi
     <DrawingCanvas
       drawing={drawing}
       pen={pen}
+      locked={locked}
       onStroke={onStroke}
       onErase={onErase}
       patternId={`rules-${drawing.id}-${where}`}

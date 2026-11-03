@@ -89,7 +89,7 @@ test('editor blocks map to plain block types', () => {
       textBlock('quote', {}, 'Q'),
       textBlock('callout', {}, 'Note'),
       { id: 'd', type: 'divider', props: {}, children: [] },
-      textBlock('codeBlock', { language: 'python' }, 'x = 1\n  y = *2*'),
+      { id: 'c', type: 'codeBlock', props: { language: 'python', code: 'x = 1\n  y = *2*' }, children: [] },
     ],
   };
   expect(pageToFile(nb, writeTarget).blocks).toEqual([
@@ -109,16 +109,55 @@ test('editor blocks map to plain block types', () => {
     ['quote', {}],
     ['callout', {}],
     ['divider', {}],
-    ['codeBlock', { language: 'python' }],
+    ['codeBlock', { language: 'python', code: 'x = 1\n  y = *2*' }],
   ]);
   expect(back[1].children[0]).toMatchObject({ type: 'numberedListItem', props: { start: 4 } });
-  expect(back[6].content).toEqual([{ type: 'text', text: 'x = 1\n  y = *2*', styles: {} }]);
+  // Code is the block's own text, never read as marks or links.
+  expect(back[6].content).toBeUndefined();
 });
 
 test('a block type the app does not know is kept as a code block holding its JSON', () => {
   const raw = { id: 'n1', title: 'T', position: 0, created: '2026-10-20T00:00:00Z', updated: '2026-10-20T00:00:00Z', blocks: [{ type: 'table', rows: 2 }] };
   const [block] = fileToPage(raw, meta({ id: 'n1', spaceId: 's', parentId: null })).notebook.blocks;
-  expect(block).toMatchObject({ type: 'codeBlock', props: { language: 'json' }, content: [{ type: 'text', text: formatJson({ type: 'table', rows: 2 }).trim(), styles: {} }] });
+  expect(block).toMatchObject({ type: 'codeBlock', props: { language: 'json', code: formatJson({ type: 'table', rows: 2 }).trim() } });
+  expect(block.content).toBeUndefined();
+  // Saved, it is a code block holding that JSON.
+  const page = fileToPage(raw, meta({ id: 'n1', spaceId: 's', parentId: null })).notebook;
+  expect(pageToFile(page, writeTarget).blocks).toEqual([{ type: 'code', language: 'json', code: formatJson({ type: 'table', rows: 2 }).trim() }]);
+});
+
+const CODES = [
+  'def level(x):\n\treturn x  \t\n',
+  '',
+  '   ',
+  'trailing spaces   \n\n\n',
+  'naïve — 日本語 🚀 ქართული “quotes”\n',
+  'line one\r\nline two\rline three\n',
+  '[[Not a link]] **not bold** `x` ==y== <u>z</u> \\ \\n #tag',
+  '{ "type": "paragraph", "text": "json" }',
+];
+
+test.each(CODES.map((code) => [JSON.stringify(code), code]))('code %s round-trips file → page → file byte for byte', (_name, code) => {
+  const text = formatJson(whole([{ type: 'paragraph', text: 'Before' }, { type: 'code', language: 'python', code }, { type: 'quote', text: 'After *this*' }]));
+  const { notebook, repaired } = fileToPage(JSON.parse(text), nm());
+  expect(repaired).toBe(false);
+  expect(notebook.blocks[1]).toMatchObject({ type: 'codeBlock', props: { language: 'python', code } });
+  expect(formatJson(pageToFile(notebook, writeTarget))).toBe(text);
+});
+
+test("a code block's language is kept as written, and plain text when there is none", () => {
+  const { notebook } = fileToPage(whole([{ type: 'code', language: 'py', code: 'x' }, { type: 'code', code: 'y' }]), nm());
+  expect(notebook.blocks.map((b) => b.props)).toEqual([{ language: 'py', code: 'x' }, { language: 'text', code: 'y' }]);
+  expect(pageToFile(notebook, writeTarget).blocks).toEqual([{ type: 'code', language: 'py', code: 'x' }, { type: 'code', language: 'text', code: 'y' }]);
+});
+
+test('a code block that holds no code, or something else, is written with empty code', () => {
+  const blocks: PageBlock[] = [
+    { id: 'a', type: 'codeBlock', props: { language: 'python' }, children: [] },
+    { id: 'b', type: 'codeBlock', props: { language: 'python', code: 7 }, children: [] },
+  ];
+  const nb: Notebook = { id: 'n1', title: 'T', spaceId: 's', parentId: null, position: 0, createdAt: 0, updatedAt: 0, items: {}, blocks };
+  expect(pageToFile(nb, writeTarget).blocks).toEqual([{ type: 'code', language: 'python', code: '' }, { type: 'code', language: 'python', code: '' }]);
 });
 
 test('missing fields are filled in, and the page says it was repaired', () => {

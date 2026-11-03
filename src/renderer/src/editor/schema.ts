@@ -1,10 +1,12 @@
 import { BlockNoteSchema, createHeadingBlockSpec, defaultBlockSpecs, defaultInlineContentSpecs } from '@blocknote/core';
 import { ChartBlock, DrawingBlock, EmbedBlock, PredictionBlock, TradePlanBlock } from './ItemBlocks';
 import { CalloutBlock } from './Callout';
+import { CodeBlock } from './CodeBlock';
 import { NotebookLink } from './NotebookLink';
 
 // Tables, media, files, page breaks and toggle lists are left out: a notebook page doesn't hold them.
-const { paragraph, bulletListItem, numberedListItem, checkListItem, quote, codeBlock, divider } = defaultBlockSpecs;
+// Code blocks are the page's own, edited in Monaco (see CodeBlock).
+const { paragraph, bulletListItem, numberedListItem, checkListItem, quote, divider } = defaultBlockSpecs;
 
 export const schema = BlockNoteSchema.create({
   blockSpecs: {
@@ -14,7 +16,7 @@ export const schema = BlockNoteSchema.create({
     numberedListItem,
     checkListItem,
     quote,
-    codeBlock,
+    codeBlock: CodeBlock(),
     divider,
     callout: CalloutBlock(),
     chart: ChartBlock(),

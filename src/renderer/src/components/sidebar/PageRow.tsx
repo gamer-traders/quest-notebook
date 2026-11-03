@@ -8,7 +8,7 @@ import type { Intent } from './dropIntent';
 import { InlineRename, type RenameEnd } from './InlineRename';
 import { RowMenu, type MenuItem } from './RowMenu';
 import { Chevron } from './Chevron';
-import { deletePageLabel } from './labels';
+import { LOCKED_PAGE, LOCKED_SUB_PAGE, deletePageLabel } from './labels';
 
 /** What a drag carries, and what a drop zone takes. */
 export type DragItem = { kind: 'page' | 'space'; id: string };
@@ -23,6 +23,11 @@ export interface PageRowProps {
   subPages: number;
   /** The line or outline shown while a page is dragged over this row. */
   drop: { intent: Intent; lineDepth: number } | null;
+  /**
+   * Claude is working on this page, or on one below it, until the turn ends. Meanwhile neither is renamed, moved,
+   * dragged or deleted: renaming or moving a page moves the files below it too, and deleting it trashes them.
+   */
+  lock: 'page' | 'below' | null;
   renaming: boolean;
   onOpen: () => void;
   onToggle: () => void;
@@ -37,11 +42,11 @@ export interface PageRowProps {
 
 /** One page in the sidebar tree: a toggle, the title that opens it (and drags it), then + and ⋯ on hover. */
 export function PageRow(props: PageRowProps) {
-  const { page, depth, hasChildren, open, current, subPages, drop, renaming } = props;
+  const { page, depth, hasChildren, open, current, subPages, drop, lock, renaming } = props;
   const title = displayTitle(page.title);
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const drag = useDraggable({ id: `page:${page.id}`, data: { kind: 'page', id: page.id } satisfies DragItem, disabled: renaming });
+  const drag = useDraggable({ id: `page:${page.id}`, data: { kind: 'page', id: page.id } satisfies DragItem, disabled: renaming || lock !== null });
   const dropZone = useDroppable({ id: `row:${page.id}`, data: { accepts: 'page', kind: 'row', id: page.id, depth } satisfies DropZone });
   const rowRef = useCombinedRefs<HTMLElement | null>(drag.setNodeRef, dropZone.setNodeRef);
 
@@ -57,12 +62,13 @@ export function PageRow(props: PageRowProps) {
     }
   }, [renaming]);
 
+  const held = lock === null ? {} : { disabled: true, hint: lock === 'page' ? LOCKED_PAGE : LOCKED_SUB_PAGE };
   const items: MenuItem[] = [
     { label: 'Add sub-page', onSelect: props.onAddSubPage },
-    { label: 'Rename', onSelect: props.onStartRename },
-    { label: 'Move to…', onSelect: props.onMoveTo },
+    { label: 'Rename', onSelect: props.onStartRename, ...held },
+    { label: 'Move to…', onSelect: props.onMoveTo, ...held },
     { label: 'Copy link for [[ ]]', onSelect: props.onCopyLink },
-    { label: deletePageLabel(subPages), onSelect: props.onDelete, danger: true },
+    { label: deletePageLabel(subPages), onSelect: props.onDelete, danger: true, ...held },
   ];
 
   const classes = [
@@ -98,6 +104,8 @@ export function PageRow(props: PageRowProps) {
             className="row-title"
             {...drag.attributes}
             {...drag.listeners}
+            // It still opens the page while it can't be dragged.
+            aria-disabled={undefined}
             aria-current={current ? 'page' : undefined}
             onClick={props.onOpen}
           >

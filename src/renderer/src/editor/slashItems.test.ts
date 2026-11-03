@@ -42,7 +42,7 @@ afterEach(() => {
 test('Chart on an empty line becomes that line, with the id of its data and the market of the chart above', () => {
   open([{ id: 'A', type: 'chart', props: { itemId: 'A' } }, { id: 'p', type: 'paragraph' }]);
   editor.setTextCursorPosition('p');
-  pick('Chart');
+  pick('Trading chart');
 
   const block = editor.document[1];
   expect(block.type).toBe('chart');
@@ -66,7 +66,7 @@ test('Trade plan after some words goes below them, with the id of its data', () 
 test('the menu has the page blocks and ours, and no emoji or blocks a page leaves out', () => {
   open([{ type: 'paragraph' }]);
   const titles = pageSlashItems(editor, 'n1').map((i) => i.title);
-  expect(titles.slice(0, 5)).toEqual(['Chart', 'Trade plan', 'Prediction', 'Drawing', 'Embed']);
+  expect(titles.slice(0, 5)).toEqual(['Trading chart', 'Trade plan', 'Prediction', 'Drawing', 'Embed']);
   expect(titles).toContain('Callout');
   expect(titles).toContain('Heading 3');
   expect(titles).not.toContain('Heading 4');

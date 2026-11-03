@@ -7,7 +7,7 @@ import { FORMAT_REFERENCE } from './readme';
 */
 
 /** Which version of the guide this is. Raise it whenever the guide's text changes. */
-export const GUIDE_VERSION = 3;
+export const GUIDE_VERSION = 4;
 
 const MARK = `<!-- quest-notebook-guide: ${GUIDE_VERSION} -->`;
 

@@ -54,7 +54,7 @@ export function PlanCellView({ notebookId, cell, chart }: Props) {
 
   let outcome;
   if (!chart) {
-    outcome = <Outcome tone="neutral" title="No chart to test on">Add a chart above this plan.</Outcome>;
+    outcome = <Outcome tone="neutral" title="No trading chart to test on">Add a trading chart above this plan.</Outcome>;
   } else if (!complete || problem) {
     outcome = null;
   } else if (!chart.revealed) {

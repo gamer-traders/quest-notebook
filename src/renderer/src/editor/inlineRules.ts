@@ -20,11 +20,12 @@ export function matchHighlight(textBefore: string): { from: number; text: string
  */
 export const LINK_TRIGGER = '[[';
 
-/** '[[' in code, a block or a word of it, is part of the code. */
+/**
+ * '[[' in inline code is part of the code. A code block's code is typed in its own editor (see CodeBlock),
+ * which the page never sees, so no link rule can reach it.
+ */
 export function linkMenuOpensHere(tr: Transaction): boolean {
-  const { $from } = tr.selection;
-  if ($from.parent.type.spec.code) return false;
-  return !(tr.storedMarks ?? $from.marks()).some((m) => m.type.name === 'code');
+  return !(tr.storedMarks ?? tr.selection.$from.marks()).some((m) => m.type.name === 'code');
 }
 
 /** The text before the caret ends by closing '[[words]]': where the '[[' starts, and the words between. */
@@ -47,8 +48,8 @@ function highlightShortcut() {
         const highlight = state.schema.marks.backgroundColor;
         if (text !== '=' || from !== to || !highlight) return false;
         const $from = state.doc.resolve(from);
-        // Code means what it says.
-        if ($from.parent.type.spec.code || $from.marks().some((m) => m.type.name === 'code')) return false;
+        // Code means what it says. (A code block's code never comes this way: it has an editor of its own.)
+        if ($from.marks().some((m) => m.type.name === 'code')) return false;
 
         const hit = matchHighlight($from.parent.textBetween(0, $from.parentOffset, undefined, LEAF) + text);
         if (!hit) return false;
@@ -117,7 +118,7 @@ const tagKey = new PluginKey<DecorationSet>('tagHighlights');
 
 /**
  * #tags wear the highlighter in the text, as everywhere else in the app. They stay plain text.
- * Code blocks too: the sidebar and search count the tags there, so the page shows them.
+ * Code blocks show theirs in their own editor (see codeEditor), as the sidebar and search count them there too.
  */
 function tagHighlights() {
   return new Plugin<DecorationSet>({

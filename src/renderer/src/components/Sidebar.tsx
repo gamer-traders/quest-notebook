@@ -25,7 +25,7 @@ const BLOCK_LABEL: Record<string, string> = {
   quote: 'Quote',
   callout: 'Callout',
   codeBlock: 'Code',
-  chart: 'Chart',
+  chart: 'Trading chart',
   tradePlan: 'Trade plan',
   prediction: 'Prediction',
   drawing: 'Drawing',

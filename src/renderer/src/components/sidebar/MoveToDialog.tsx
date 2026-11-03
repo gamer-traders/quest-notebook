@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Notebook, Space } from '../../types';
 import { childrenOf, displayTitle, pathOf, type Target } from '../../page/tree';
 import { useStore } from '../../store';
+import { lockedBranch, useClaude, useHoldsLock, useLocked } from '../../claude/store';
+import { LOCKED_PAGE, LOCKED_SUB_PAGE } from './labels';
 
 export interface Choice {
   key: string;
@@ -48,6 +50,10 @@ export function MoveToDialog({ pageId, onClose }: { pageId: string; onClose: () 
   const notebooks = useStore((s) => s.notebooks);
   const spaces = useStore((s) => s.spaces);
   const page = notebooks.find((nb) => nb.id === pageId);
+  // A turn that started after the dialog opened, on this page or one below it, which moving this one would move
+  // too: it stays where it is until the reply ends.
+  const locked = useHoldsLock(pageId);
+  const lockedHere = useLocked(pageId);
   const [query, setQuery] = useState('');
   const dialog = useRef<HTMLDialogElement>(null);
 
@@ -60,6 +66,7 @@ export function MoveToDialog({ pageId, onClose }: { pageId: string; onClose: () 
   const shown = matchingChoices(choices, query);
 
   const pick = (choice: Choice) => {
+    if (lockedBranch(useClaude.getState(), useStore.getState().notebooks).has(pageId)) return;
     useStore.getState().movePage(pageId, choice.target);
     onClose();
   };
@@ -92,6 +99,7 @@ export function MoveToDialog({ pageId, onClose }: { pageId: string; onClose: () 
             }
           }}
         />
+        {locked && <p className="muted move-locked">{lockedHere ? LOCKED_PAGE : LOCKED_SUB_PAGE}. It can move once the reply ends.</p>}
       </div>
       {shown.length === 0 ? (
         <p className="muted move-empty">Nothing matches “{query}”.</p>
@@ -99,7 +107,7 @@ export function MoveToDialog({ pageId, onClose }: { pageId: string; onClose: () 
         <ul className="move-list">
           {shown.map((c) => (
             <li key={c.key}>
-              <button onClick={() => pick(c)}>
+              <button disabled={locked} onClick={() => pick(c)}>
                 {c.path.length > 1 && <span className="move-where">{c.path.slice(0, -1).join(' / ')} / </span>}
                 <span className={c.path.length === 1 ? 'move-space' : undefined}>{c.path.at(-1)}</span>
               </button>

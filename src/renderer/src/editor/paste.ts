@@ -47,11 +47,9 @@ function pageNamedBy(text: string): string | null {
  */
 export function pastePage({ event, editor, defaultPasteHandler }: PasteContext): boolean | undefined {
   const data = event.clipboardData;
-  // The editor's own copies keep their blocks, code from VS Code becomes a code block, and code pastes as text.
-  const usual =
-    !data ||
-    ['blocknote/html', 'vscode-editor-data'].some((type) => data.types.includes(type)) ||
-    editor.prosemirrorState.selection.$from.parent.type.spec.code;
+  // The editor's own copies keep their blocks, and code from VS Code becomes a code block.
+  // (Pasting into a code block's code is its own editor's business: the page never sees it.)
+  const usual = !data || ['blocknote/html', 'vscode-editor-data'].some((type) => data.types.includes(type));
   if (!usual) {
     const links = linksInPastedHTML(data.getData('text/html'));
     const named = links.length === 0 ? pageNamedBy(data.getData('text/plain')) : null;

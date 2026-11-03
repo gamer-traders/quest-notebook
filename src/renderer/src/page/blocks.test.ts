@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import type { CallCell, ChartCell, Notebook, PlanCell } from '../types';
 import type { PageBlock } from './blockTypes';
-import { backlinksTo, chartAboveItem, chartBeforeBlock, copiedItems, flattenBlocks, inlineText, itemsUnderChart, linksIn, pruneItems, titleLookup } from './blocks';
+import { backlinksTo, blockText, chartAboveItem, chartBeforeBlock, copiedItems, flattenBlocks, inlineText, itemsUnderChart, linksIn, pruneItems, titleLookup } from './blocks';
 
 const chart = (id: string): ChartCell => ({
   id, type: 'chart', symbol: 'BTCUSDT', interval: '1d', asOf: 0, revealed: false, practice: false, levels: [], trends: [], pins: [],
@@ -94,6 +94,15 @@ describe('inlineText', () => {
   test('reads a notebook link without props as a deleted link', () => {
     const content = [text('See '), { type: 'notebookLink' }, text(' and '), { type: 'notebookLink', props: {} }, text('.')];
     expect(inlineText(content, titleOf)).toBe('See Deleted notebook and Deleted notebook.');
+  });
+});
+
+describe('blockText', () => {
+  test("a text block's words, and a code block's code, which search and the tag list read", () => {
+    expect(blockText(block('p', 'paragraph', [text('Levels #btc')]), titleOf)).toBe('Levels #btc');
+    const code: PageBlock = { id: 'c', type: 'codeBlock', props: { language: 'python', code: 'stop = 61_800  # #risk\n[[Not a link]]' }, children: [] };
+    expect(blockText(code, titleOf)).toBe('stop = 61_800  # #risk\n[[Not a link]]');
+    expect(blockText({ ...code, props: { language: 'python' } }, titleOf)).toBe('');
   });
 });
 

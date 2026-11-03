@@ -42,6 +42,7 @@ const workspaces = new Workspaces(join(app.getPath('userData'), 'workspaces.json
   lost: (message) => send('workspace:lost', message),
   opened: (name) => getWindow()?.setTitle(name ? `${name} — ${PRODUCT}` : PRODUCT),
   trash: (abs) => shell.trashItem(abs),
+  claudeEvent: (e) => send('claude:event', e),
   confirmAdopt: async (root) => {
     const options = {
       type: 'question' as const,
@@ -92,6 +93,8 @@ function createWindow(): BrowserWindow {
   let saved = false;
   created.on('close', (e) => {
     if (saved) return;
+    // macOS keeps the app running without a window: a turn mustn't go on unseen.
+    workspaces.stopClaude();
     e.preventDefault();
     void flushWindow().finally(() => {
       saved = true;
@@ -121,9 +124,32 @@ app.on('before-quit', () => {
   quitting = true;
 });
 
+/** How long quitting waits for the record of a turn it cut short. */
+const QUIT_WAIT_MS = 3000;
+/** Set once quitting waits for Claude's record: the app then exits by itself. */
+let exiting = false;
+
+// Whatever way the app quits, the claude child is stopped (closing twice is harmless). Electron doesn't wait for async
+// work after will-quit, so while a turn runs (or a closed one's record is still being written) quitting waits for the
+// record of the reply so far, a few seconds at most, then exits.
+app.on('will-quit', (e) => {
+  if (exiting) {
+    e.preventDefault();
+    return;
+  }
+  if (!workspaces.claudeBusy) {
+    void workspaces.close();
+    return;
+  }
+  e.preventDefault();
+  exiting = true;
+  const limit = new Promise<void>((resolve) => setTimeout(resolve, QUIT_WAIT_MS));
+  void Promise.race([workspaces.close(), limit]).finally(() => app.exit());
+});
+
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin' || quitting) {
-    workspaces.close();
+    void workspaces.close();
     app.quit();
   }
 });

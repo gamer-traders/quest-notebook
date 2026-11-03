@@ -10,12 +10,16 @@ import { Welcome } from './components/Welcome';
 import { useWorkspaceUi } from './workspace/session';
 import { MarkdownView } from './markdown/MarkdownView';
 import { isMarkdownId } from './markdown/model';
+import { ClaudePanel, toggleClaude } from './claude/ClaudePanel';
+import { isClaudeShortcut } from './claude/panel';
+import { useClaude } from './claude/store';
 
 export function App() {
   const view = useStore((s) => s.view);
   const openMarkdown = useStore((s) => (isMarkdownId(s.activeId) ? (s.markdown.find((m) => m.id === s.activeId) ?? null) : null));
   const workspace = useStore((s) => s.workspace);
   const screen = useWorkspaceUi((s) => s.screen);
+  const claudeOpen = useClaude((s) => s.open);
   const [navOpen, setNavOpen] = useState(false);
   // Open Settings, and the button that opened it: none for the shortcut.
   const [settings, setSettings] = useState<{ trigger: Element | null } | null>(null);
@@ -39,12 +43,25 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey, true);
   }, []);
 
+  // Cmd+J opens and closes Claude from anywhere in a workspace, caught on the way down like Cmd+,.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!isClaudeShortcut(e, IS_MAC)) return;
+      if (!useStore.getState().workspace || useWorkspaceUi.getState().screen !== 'app') return;
+      e.preventDefault();
+      e.stopPropagation();
+      toggleClaude();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
+
   // Nothing shows for the moment it takes main to say which workspace is open, so the welcome screen doesn't flash.
   if (screen === 'loading') return <div className="app-loading" />;
   if (!workspace || screen !== 'app') return <Welcome />;
 
   return (
-    <div className={`app${navOpen ? ' nav-open' : ''}`}>
+    <div className={`app${navOpen ? ' nav-open' : ''}${claudeOpen ? ' claude-open' : ''}`}>
       <div className="topbar">
         <button className="quiet" aria-expanded={navOpen} onClick={() => setNavOpen((o) => !o)}>
           {navOpen ? 'Close' : 'Notebooks'}
@@ -57,6 +74,7 @@ export function App() {
         <DiskNotice />
         {view === 'review' ? <ReviewView /> : openMarkdown ? <MarkdownView key={openMarkdown.id} file={openMarkdown} /> : <NotebookView />}
       </main>
+      {claudeOpen && <ClaudePanel />}
       {settings && <SettingsDialog trigger={settings.trigger} onClose={() => setSettings(null)} />}
     </div>
   );

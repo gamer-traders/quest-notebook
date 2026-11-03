@@ -11,6 +11,7 @@ import { CallCellView } from '../cells/CallCellView';
 import { DrawingView } from '../drawing/DrawingView';
 import { EmbedView } from '../embed/EmbedView';
 import { useNotebookId } from './NotebookContext';
+import { useLocked } from '../claude/store';
 
 // Chart, trade plan and prediction blocks hold only an id. Their data lives in the notebook's
 // items, so chart edits never touch the document and typing never redraws a chart.
@@ -23,6 +24,8 @@ const NONE: (PlanCell | CallCell)[] = [];
 const stop = (e: SyntheticEvent) => e.stopPropagation();
 
 function ItemFrame({ kind, children }: { kind: string; children: ReactNode }) {
+  // While Claude works on the page, every button and field in the block is disabled at once.
+  const locked = useLocked(useNotebookId());
   return (
     <div
       className={`item-block item-${kind}`}
@@ -33,7 +36,9 @@ function ItemFrame({ kind, children }: { kind: string; children: ReactNode }) {
       onPaste={stop}
       onDragStart={stop}
     >
-      {children}
+      <fieldset className="item-fields" role="none" disabled={locked}>
+        {children}
+      </fieldset>
     </div>
   );
 }
@@ -114,7 +119,7 @@ export const ChartBlock = createReactBlockSpec(
         <ChartBlockView blockId={block.id} />
       </ItemFrame>
     ),
-    toExternalHTML: ({ block }) => <ItemSummary blockId={block.id} label="Chart" />,
+    toExternalHTML: ({ block }) => <ItemSummary blockId={block.id} label="Trading chart" />,
   },
 );
 

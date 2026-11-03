@@ -32,6 +32,16 @@ test.each(['chart', 'tradePlan', 'prediction'] as const)('a selection that takes
   expect(canTurnInto(editor)).toBe(false);
 });
 
+// Turned into text, a code block would lose its code: it lives in the block's props, not in its text.
+test('a selection that takes in a code block offers no "turn into"', () => {
+  open([para('p1', 'Before'), { id: 'c', type: 'codeBlock', props: { language: 'python', code: 'x = 1' } }, para('p2', 'After')]);
+  editor.setSelection('p1', 'p2');
+  expect(editor.getSelection()!.blocks.map((b) => b.type)).toEqual(['paragraph', 'codeBlock', 'paragraph']);
+  expect(canTurnInto(editor)).toBe(false);
+  editor.setTextCursorPosition('c');
+  expect(canTurnInto(editor)).toBe(false);
+});
+
 // As the first Backspace under a chart leaves it.
 test('a chart selected on its own offers no "turn into"', () => {
   open([para('p1', 'Before'), item('A', 'chart'), para('p2', 'After')]);

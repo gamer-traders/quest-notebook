@@ -4,10 +4,14 @@ import { flattenBlocks } from '../page/blocks';
 import { descendantIds, displayTitle } from '../page/tree';
 import { useStore } from '../store';
 import { NotebookEditor } from '../editor/NotebookEditor';
+import { toggleClaude } from '../claude/ClaudePanel';
+import { claudeShortcutLabel } from '../claude/panel';
+import { useClaude, useHoldsLock, useLocked } from '../claude/store';
+import { IS_MAC } from './SettingsDialog';
 import { Backlinks } from './Backlinks';
 import { PagePath } from './PagePath';
 import { SubPagesPanel } from './SubPagesPanel';
-import { deletePageLabel, deletePageQuestion } from './sidebar/labels';
+import { LOCKED_SUB_PAGE, deletePageLabel, deletePageQuestion } from './sidebar/labels';
 import { UnreadablePage } from './UnreadablePage';
 
 const isItemType = (type: string) => (ITEM_BLOCK_TYPES as readonly string[]).includes(type);
@@ -19,6 +23,11 @@ export function NotebookView() {
   const flash = useStore((s) => s.flashBlockId);
   const focusTitleId = useStore((s) => s.focusTitleId);
   const revision = useStore((s) => (nb ? (s.diskRevision[nb.id] ?? 0) : 0));
+  const claudeOpen = useClaude((s) => s.open);
+  // Claude is working on this page: it reads, scrolls and follows links, but takes no edits until the turn ends.
+  const locked = useLocked(nb?.id);
+  // Nor is it deleted or renamed, nor a page above it: deleting one trashes it, and renaming one moves its file.
+  const holdsLock = useHoldsLock(nb?.id);
   const titleRef = useRef<HTMLInputElement>(null);
 
   // A page just made from the sidebar or the panel opens with its title ready to type.
@@ -85,11 +94,23 @@ export function NotebookView() {
           value={nb.title}
           placeholder="Untitled"
           aria-label="Notebook title"
+          readOnly={holdsLock}
+          title={holdsLock && !locked ? LOCKED_SUB_PAGE : undefined}
           onChange={(e) => updateNotebook(nb.id, { title: e.target.value })}
         />
         <div className="notebook-meta">
           <button
+            className="quiet"
+            aria-expanded={claudeOpen}
+            aria-keyshortcuts={IS_MAC ? 'Meta+J' : 'Control+J'}
+            title={`${claudeOpen ? 'Close' : 'Open'} Claude (${claudeShortcutLabel(IS_MAC)})`}
+            onClick={toggleClaude}
+          >
+            Claude
+          </button>
+          <button
             className="quiet danger"
+            disabled={holdsLock}
             onClick={() => {
               const { notebooks } = useStore.getState();
               if (window.confirm(deletePageQuestion(displayTitle(nb.title), descendantIds(notebooks, nb.id).length))) deletePage(nb.id);
@@ -104,8 +125,17 @@ export function NotebookView() {
       {/* The flash is a style rule rather than a class, so the editor's own DOM is never touched. */}
       {flash && <style>{`.page-editor [data-id="${CSS.escape(flash)}"] > .bn-block { animation: flash 1.6s ease-out; border-radius: var(--radius); }`}</style>}
 
+      {locked && (
+        <div className="claude-lock" role="status">
+          <span>Claude is working on this page…</span>
+          <button className="quiet" onClick={() => useClaude.getState().stop()}>
+            Stop
+          </button>
+        </div>
+      )}
+
       {/* A change on disk starts the editor over with the new page. */}
-      <NotebookEditor key={`${nb.id}:${revision}`} notebook={nb} />
+      <NotebookEditor key={`${nb.id}:${revision}`} notebook={nb} editable={!locked} />
       <Backlinks notebookId={nb.id} />
     </article>
   );

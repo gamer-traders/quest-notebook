@@ -32,6 +32,8 @@ const PARK_MS = 1000;
 interface Props {
   drawing: DrawingCell;
   pen: PenSettings;
+  /** Takes no ink: the page is read-only while Claude works on it. */
+  locked?: boolean;
   /** A finished stroke. */
   onStroke: (stroke: Stroke) => void;
   /** Strokes an eraser gesture took out, all at once when the pen lifts. */
@@ -46,7 +48,7 @@ interface Props {
  * Where ink goes on: an SVG 1000 units wide, scaled to fit. Pointer events give the pen's position and
  * pressure; coalesced events give every sample the tablet sent, so fast strokes stay smooth.
  */
-export function DrawingCanvas({ drawing, pen, onStroke, onErase, patternId, liveKey }: Props) {
+export function DrawingCanvas({ drawing, pen, locked = false, onStroke, onErase, patternId, liveKey }: Props) {
   const svg = useRef<SVGSVGElement>(null);
   const live = useRef<Live | null>(null);
   const frame = useRef(0);
@@ -131,7 +133,7 @@ export function DrawingCanvas({ drawing, pen, onStroke, onErase, patternId, live
   };
 
   const onPointerDown = (e: ReactPointerEvent<SVGSVGElement>) => {
-    if (!startsStroke(e, live.current !== null)) return;
+    if (locked || !startsStroke(e, live.current !== null)) return;
     const eraserEnd = isEraserEnd(e);
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -182,7 +184,7 @@ export function DrawingCanvas({ drawing, pen, onStroke, onErase, patternId, live
   return (
     <svg
       ref={svg}
-      className={`drawing-canvas tool-${pen.tool}`}
+      className={`drawing-canvas tool-${pen.tool}${locked ? ' is-locked' : ''}`}
       viewBox={`0 0 ${DRAWING_WIDTH} ${drawing.height}`}
       role="img"
       aria-label="Drawing"

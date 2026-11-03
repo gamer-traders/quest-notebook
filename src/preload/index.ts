@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
-import type { DiskDelta, MenuCommand, QuestApi } from '@shared/ipc';
+import type { ClaudeEvent, DiskDelta, MenuCommand, QuestApi } from '@shared/ipc';
 
 /** Listens on a channel; returns a function that stops listening. */
 function listen<T>(channel: string, cb: (value: T) => void): () => void {
@@ -46,6 +46,17 @@ const api: QuestApi = {
     },
     onMenu: (cb) => listen<MenuCommand>('app:menu', cb),
     openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
+  },
+  claude: {
+    status: () => ipcRenderer.invoke('claude:status'),
+    send: (req) => ipcRenderer.invoke('claude:send', req),
+    stop: () => ipcRenderer.invoke('claude:stop'),
+    onEvent: (cb) => listen<ClaudeEvent>('claude:event', cb),
+    listChats: () => ipcRenderer.invoke('claude:list'),
+    readChat: (id) => ipcRenderer.invoke('claude:read', id),
+    deleteChat: (id) => ipcRenderer.invoke('claude:delete', id),
+    undo: (chatId, messageId, paths, force) => ipcRenderer.invoke('claude:undo', chatId, messageId, paths, force),
+    image: (chatId, file) => ipcRenderer.invoke('claude:image', chatId, file),
   },
 };
 

@@ -71,6 +71,8 @@ export interface WorkspaceSnapshot {
   ui: UiState;
   /** True when the folder only just became a workspace. */
   isNew: boolean;
+  /** How many outside changes main had reported when this was read. The pages include them all, so a window loading it has seen them. */
+  seq?: number;
 }
 
 /** .quest/workspace.json */
@@ -118,6 +120,8 @@ export interface FlushBatch {
   journalSpaceId: string | null;
   saves: PageSave[];
   deletes: string[];
+  /** Pages saved only to fill in or tidy what an outside write left, not edited here. Left out when there are none. */
+  repairs?: string[];
 }
 
 export interface FlushResult {
@@ -158,6 +162,25 @@ export type OpenResult = { ok: true; snapshot: WorkspaceSnapshot } | { ok: false
 
 export type MenuCommand = 'new-workspace' | 'open-workspace' | 'reveal-workspace';
 
+/** One thing Claude did in a turn. `path` is relative to the workspace, with `/` separators. */
+export interface ChatAction {
+  /** The tool_use id. */
+  id?: string;
+  verb: 'read' | 'edited' | 'created' | 'searched' | 'other';
+  path?: string;
+  detail?: string;
+  /** Set later, when the CLI reports the call as refused. */
+  refused?: boolean;
+}
+
+/** What the setup check found about the claude CLI. */
+export interface ClaudeStatus {
+  state: 'ready' | 'missing' | 'logged-out' | 'error';
+  path?: string;
+  version?: string;
+  message?: string;
+}
+
 /** `window.quest`: everything the window can ask of the main process. */
 export interface QuestApi {
   workspaces: {
@@ -187,4 +210,119 @@ export interface QuestApi {
     onMenu(cb: (cmd: MenuCommand) => void): () => void;
     openExternal(url: string): Promise<void>;
   };
+  /** Claude, run as the claude CLI in the open workspace. One turn at a time. */
+  claude: {
+    /** Looks for the CLI again, and whether it's logged in. */
+    status(): Promise<ClaudeStatus>;
+    /** Starts a turn. `messageId` is the id of the reply the events will carry. */
+    send(req: SendRequest): Promise<{ chatId: string; messageId: string } | { error: string }>;
+    /** Stops the running turn. It still ends with a `done` event. */
+    stop(): Promise<void>;
+    onEvent(cb: (e: ClaudeEvent) => void): () => void;
+    listChats(): Promise<ChatSummary[]>;
+    readChat(id: string): Promise<Chat | null>;
+    deleteChat(id: string): Promise<void>;
+    /** Puts back what a reply changed: the given paths, or all of them for null. `force` overwrites files changed since. */
+    undo(chatId: string, messageId: string, paths: string[] | null, force: boolean): Promise<UndoResult>;
+    /** An image saved with a chat's message, by its file name. Null when it's gone or the name isn't one of that chat's. */
+    image(chatId: string, file: string): Promise<ImageData | null>;
+  };
+}
+
+/** The image types Claude can see. */
+export const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
+export type ImageType = (typeof IMAGE_TYPES)[number];
+/** At most this many images per message, each at most this many bytes. */
+export const MAX_IMAGES = 10;
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+/** An image's bytes, as base64 without a `data:` prefix. */
+export interface ImageData {
+  type: ImageType;
+  data: string;
+}
+
+/** A message for Claude. `chatId` null starts a new chat. `openPageId` is the page open in the window, if any. */
+export interface SendRequest {
+  chatId: string | null;
+  message: string;
+  references: ChatReference[];
+  openPageId: string | null;
+  /** Images pasted or dropped into the message. */
+  images?: ImageData[];
+}
+
+/**
+ * What a running turn reports. An `action` with an id already sent replaces that action (a refusal arrives this way,
+ * as the same action with `refused: true`). `done` carries the finished reply.
+ */
+export type ClaudeEvent = { chatId: string; messageId: string } & (
+  | { kind: 'text'; text: string }
+  | { kind: 'action'; action: ChatAction }
+  | { kind: 'done'; message: ChatMessage }
+);
+
+/** A page or drawing file that changed on disk, as Claude's turn left it. `before` is null for a file that is new. */
+export interface FileChange {
+  /** Relative to the workspace folder, with '/' between parts. */
+  path: string;
+  /** The page's id, or for a drawing its page's. Left out for a page file that can't be read. */
+  pageId?: string;
+  kind: 'edited' | 'created';
+  drawing: boolean;
+  /** The file's top folder (its space) didn't exist before the turn. Set by the turn's service, not by the scanner. */
+  newSpace?: boolean;
+  before: string | null;
+  after: string | null;
+}
+
+/** What undoing a turn did: the files put back, and the files left alone because they changed since. */
+export interface UndoResult {
+  undone: string[];
+  conflicts: string[];
+}
+
+/**
+ * What a chat message pointed Claude at: a whole page, a passage of it, or blocks of it. A block reference's `text` is
+ * the blocks as they're written in the page file (JSON), and `where` says where they sit on the page, in words.
+ */
+export type ChatReference =
+  | { kind: 'page'; pageId: string; title: string }
+  | { kind: 'selection'; pageId: string; title: string; text: string }
+  | { kind: 'block'; pageId: string; title: string; text: string; where: string };
+
+/** An image saved with a message, in .quest/chats/images/. `file` is its name there: `<chat id>-<8 letters or digits>.<ext>`. */
+export interface ChatImage {
+  file: string;
+  type: ImageType;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  created: string;
+  references?: ChatReference[];
+  images?: ChatImage[];
+  actions?: ChatAction[];
+  changes?: FileChange[];
+  /** Paths of the changes that were undone. */
+  undone?: string[];
+  error?: string;
+}
+
+/** A saved conversation, kept in .quest/chats/<id>.json. `sessionId` is the CLI session to resume. */
+export interface Chat {
+  id: string;
+  title: string;
+  sessionId: string | null;
+  created: string;
+  updated: string;
+  messages: ChatMessage[];
+}
+
+export interface ChatSummary {
+  id: string;
+  title: string;
+  updated: string;
 }

@@ -7,6 +7,8 @@ import { barsKey, refreshBars, useManyBars, type BarsSpec } from '../lib/market'
 import { gradeCall, gradePlan, planMath, type CallResult, type PlanResult } from '../lib/grade';
 import { formatMoment, formatPct, formatPrice, formatR } from '../lib/format';
 import { useStore } from '../store';
+import { isLocked, useClaude } from '../claude/store';
+import { LOCKED_PAGE } from './sidebar/labels';
 
 interface Row {
   notebook: Notebook;
@@ -32,6 +34,8 @@ function callVerdict(r: CallResult | null): Verdict {
 export function ReviewView() {
   const notebooks = useStore((s) => s.notebooks);
   const { openNotebook, updateItem } = useStore.getState();
+  // The page Claude is working on takes no changes until the turn ends, revealing its charts among them.
+  const running = useClaude((s) => s.running);
 
   const rows: Row[] = [];
   for (const nb of notebooks) {
@@ -44,7 +48,7 @@ export function ReviewView() {
 
   const graded = rows.map((row) => {
     const { chart, cell } = row;
-    if (!chart) return { row, verdict: { tone: 'neutral', text: 'No chart above' } as Verdict };
+    if (!chart) return { row, verdict: { tone: 'neutral', text: 'No trading chart above' } as Verdict };
     if (!chart.revealed) return { row, verdict: { tone: 'locked', text: 'Not revealed yet' } as Verdict };
     const data = isCustom(chart) ? customBarSet(chart.candles ?? [], chart.asOf) : bars.get(barsKey(chart.symbol, chart.interval, chart.asOf))?.data;
     if (!data) return { row, verdict: { tone: 'waiting', text: 'Loading…' } as Verdict };
@@ -59,8 +63,10 @@ export function ReviewView() {
   const locked = graded.filter((g) => g.verdict.tone === 'locked').length;
 
   const reveal = async (chart: ChartCell, notebookId: string) => {
+    if (isLocked(useClaude.getState(), notebookId)) return;
     if (!isCustom(chart)) await refreshBars(chart.symbol, chart.interval, chart.asOf).catch(() => undefined);
-    updateItem<ChartCell>(notebookId, chart.id, { revealed: true });
+    // A turn may have started on the page while the candles loaded.
+    if (!isLocked(useClaude.getState(), notebookId)) updateItem<ChartCell>(notebookId, chart.id, { revealed: true });
   };
 
   return (
@@ -96,7 +102,7 @@ export function ReviewView() {
         <table className="review-table">
           <thead>
             <tr>
-              <th scope="col">Chart</th>
+              <th scope="col">Trading chart</th>
               <th scope="col">What you said</th>
               <th scope="col">Result</th>
               <th scope="col">
@@ -107,6 +113,7 @@ export function ReviewView() {
           <tbody>
             {graded.map(({ row, verdict }) => {
               const { cell, chart, notebook } = row;
+              const held = isLocked({ running }, notebook.id);
               const said =
                 cell.type === 'call'
                   ? `${cell.direction === 'up' ? 'Up' : 'Down'} over ${cell.bars} candles`
@@ -115,7 +122,7 @@ export function ReviewView() {
                     }`;
               return (
                 <tr key={cell.id}>
-                  <td data-label="Chart">
+                  <td data-label="Trading chart">
                     <strong>{chart ? chartTitle(chart) : '–'}</strong>
                     <span className="sub">
                       {chart
@@ -137,7 +144,7 @@ export function ReviewView() {
                   </td>
                   <td className="row-actions">
                     {chart && !chart.revealed && (
-                      <button className="quiet" onClick={() => reveal(chart, notebook.id)}>
+                      <button className="quiet" disabled={held} title={held ? LOCKED_PAGE : undefined} onClick={() => reveal(chart, notebook.id)}>
                         Reveal
                       </button>
                     )}

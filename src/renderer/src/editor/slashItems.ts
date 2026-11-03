@@ -8,6 +8,7 @@ import { newItem } from '../lib/cells';
 import { useStore } from '../store';
 import { usePen } from '../drawing/penSettings';
 import { LINK_TRIGGER } from './inlineRules';
+import { focusCodeSoon } from './codeFocus';
 import type { PageEditor } from './schema';
 
 // Line icons drawn like the menu's own: on a 24-unit grid, in the text colour.
@@ -54,16 +55,16 @@ export function pageSlashItems(editor: PageEditor, notebookId: string): DefaultR
 
   const items: DefaultReactSuggestionItem[] = [
     {
-      title: 'Chart',
+      title: 'Trading chart',
       subtext: 'Candles to study and mark up',
-      aliases: ['chart', 'candles', 'price', 'graph'],
+      aliases: ['trading', 'chart', 'candles', 'price', 'graph'],
       group: ITEM_GROUP,
       icon: ICONS.chart,
       onItemClick: () => insertItem(editor, notebookId, 'chart'),
     },
     {
       title: 'Trade plan',
-      subtext: 'Entry, stop and target, tested on the chart above',
+      subtext: 'Entry, stop and target, tested on the trading chart above',
       aliases: ['plan', 'trade', 'entry', 'stop', 'target'],
       group: ITEM_GROUP,
       icon: ICONS.plan,
@@ -71,7 +72,7 @@ export function pageSlashItems(editor: PageEditor, notebookId: string): DefaultR
     },
     {
       title: 'Prediction',
-      subtext: 'Up or down, checked on the chart above',
+      subtext: 'Up or down, checked on the trading chart above',
       aliases: ['prediction', 'call', 'forecast', 'guess'],
       group: ITEM_GROUP,
       icon: ICONS.call,
@@ -114,10 +115,19 @@ export function pageSlashItems(editor: PageEditor, notebookId: string): DefaultR
     onItemClick: () => editor.getExtension(SuggestionMenu)?.openSuggestionMenu(LINK_TRIGGER, { deleteTriggerCharacter: true, ignoreQueryLength: true }),
   };
 
+  // A new code block takes the caret into its code.
+  const code = (item: DefaultReactSuggestionItem): DefaultReactSuggestionItem => ({
+    ...item,
+    onItemClick: () => {
+      const block = insertOrUpdateBlockForSlashMenu(editor, { type: 'codeBlock' });
+      focusCodeSoon(editor, block.id, 'start');
+    },
+  });
+
   // The schema already drops the defaults for blocks a page doesn't hold. Emoji isn't a block.
   for (const item of getDefaultReactSlashMenuItems(editor)) {
     if (item.title === dict.emoji.title) continue;
-    items.push(item);
+    items.push(item.title === dict.code_block.title ? code(item) : item);
     if (item.title === dict.quote.title) items.push(callout, link);
   }
   return items;

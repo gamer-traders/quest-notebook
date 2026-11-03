@@ -6,11 +6,14 @@ import { InlineRename, type RenameEnd } from './InlineRename';
 import { RowMenu, type MenuItem } from './RowMenu';
 import type { DragItem, DropZone } from './PageRow';
 import { Chevron } from './Chevron';
+import { LOCKED_SPACE } from './labels';
 
 export interface SpaceHeaderProps {
   space: Space;
   /** The last space can't be deleted. */
   onlySpace: boolean;
+  /** Claude is working on a page in this space, which renaming the space would move and deleting it would trash. */
+  holdsLock: boolean;
   /** A page dragged over the header goes to the end of the space. */
   dropInside: boolean;
   /** Its pages are folded away. */
@@ -25,7 +28,7 @@ export interface SpaceHeaderProps {
 
 /** A chevron and the space's name, which fold its pages and drag the space, then + (new page) and ⋯ (rename, delete) on hover. */
 export function SpaceHeader(props: SpaceHeaderProps) {
-  const { space, onlySpace, dropInside, collapsed, renaming } = props;
+  const { space, onlySpace, holdsLock, dropInside, collapsed, renaming } = props;
   const [menuOpen, setMenuOpen] = useState(false);
 
   const drag = useDraggable({ id: `space:${space.id}`, data: { kind: 'space', id: space.id } satisfies DragItem, disabled: renaming });
@@ -47,8 +50,14 @@ export function SpaceHeader(props: SpaceHeaderProps) {
   }, [renaming]);
 
   const items: MenuItem[] = [
-    { label: 'Rename', onSelect: props.onStartRename },
-    { label: 'Delete space', onSelect: props.onDelete, danger: true, disabled: onlySpace, hint: onlySpace ? 'A notebook needs at least one space' : undefined },
+    { label: 'Rename', onSelect: props.onStartRename, disabled: holdsLock, hint: holdsLock ? LOCKED_SPACE : undefined },
+    {
+      label: 'Delete space',
+      onSelect: props.onDelete,
+      danger: true,
+      disabled: onlySpace || holdsLock,
+      hint: onlySpace ? 'A notebook needs at least one space' : holdsLock ? LOCKED_SPACE : undefined,
+    },
   ];
 
   const classes = ['space-head', menuOpen && 'is-menu-open', dropInside && 'drop-inside'].filter(Boolean);
